@@ -102,6 +102,12 @@ class DownloadManager:
             'extract_flat': True,
             'force_ipv4': True
         }
+        
+        # Add cookies if present in backend directory
+        cookies_path = os.path.join(os.path.dirname(__file__), "..", "..", "cookies.txt")
+        if os.path.exists(cookies_path):
+            ydl_opts['cookiefile'] = cookies_path
+            print(f"Using cookies from: {cookies_path}")
         try:
             print(f"Expanding playlist: {url}")
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -357,6 +363,11 @@ class DownloadManager:
             'socket_timeout': 15,
             'force_ipv4': True
         }
+        
+        # Add cookies if present in backend directory
+        cookies_path = os.path.join(os.path.dirname(__file__), "..", "..", "cookies.txt")
+        if os.path.exists(cookies_path):
+            ydl_opts['cookiefile'] = cookies_path
 
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:

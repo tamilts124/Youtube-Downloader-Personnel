@@ -55,6 +55,11 @@ async def get_video_info(video_req: VideoRequest):
         'extract_flat': 'in_playlist',
         'force_ipv4': True
     }
+    
+    # Add cookies if present in backend directory
+    cookies_path = os.path.join(os.path.dirname(__file__), "..", "..", "cookies.txt")
+    if os.path.exists(cookies_path):
+        ydl_opts['cookiefile'] = cookies_path
 
     try:
         def extract():
@@ -67,7 +72,10 @@ async def get_video_info(video_req: VideoRequest):
             video_data = info['entries'][0]
             if 'formats' not in video_data:
                 def extract_video_details():
-                    with yt_dlp.YoutubeDL({'quiet': True, 'no_warnings': True, 'force_ipv4': True}) as ydl:
+                    inner_opts = {'quiet': True, 'no_warnings': True, 'force_ipv4': True}
+                    if os.path.exists(cookies_path):
+                        inner_opts['cookiefile'] = cookies_path
+                    with yt_dlp.YoutubeDL(inner_opts) as ydl:
                         return ydl.extract_info(video_data['url'] if 'url' in video_data else video_data['id'], download=False)
                 video_data = await run_sync(extract_video_details)
         else:
