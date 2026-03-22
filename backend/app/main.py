@@ -1,7 +1,11 @@
 from fastapi import FastAPI, WebSocket
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from contextlib import asynccontextmanager
 import asyncio
+import os
+import uvicorn
 
 from app.core.manager import DownloadManager
 from app.api.routes import router
@@ -29,12 +33,6 @@ class ConnectionManager:
                     self.disconnect(connection)
                 except:
                     pass
-
-import os
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
-
-# ... (ConnectionManager and lifespan same) ...
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

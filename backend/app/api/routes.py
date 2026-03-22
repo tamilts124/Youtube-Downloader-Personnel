@@ -1,4 +1,4 @@
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Request, HTTPException, BackgroundTasks
+from fastapi import APIRouter, WebSocket, Request, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import yt_dlp
