@@ -1,4 +1,4 @@
-# --- Ultra-Manual Minimal Windows Dockerfile (Nanoserver) ---
+# --- Bulletproof Minimal Windows Dockerfile (Nanoserver) ---
 FROM mcr.microsoft.com/powershell:nanoserver-ltsc2022
 
 USER ContainerAdministrator
@@ -8,7 +8,7 @@ WORKDIR /app
 SHELL ["pwsh", "-Command", "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue';"]
 
 # 1. & 2. & 3. Consolidated Manual Installation (Node, Python, FFmpeg)
-# Combining into one RUN prevents path breakage between steps and ensures stay inside Nanoserver limits.
+# We perform all downloads in one layer and do NOT touch the global PATH yet.
 RUN Write-Host 'Installing dependencies...'; \
     # Node.js (v22.13.1)
     Invoke-WebRequest -Uri 'https://nodejs.org/dist/v22.13.1/node-v22.13.1-win-x64.zip' -OutFile 'node.zip'; \
@@ -32,20 +32,22 @@ RUN Write-Host 'Installing dependencies...'; \
     Remove-Item -Path 'C:\ffmpeg_temp' -Recurse -Force; \
     Remove-Item -Path 'ffmpeg.zip' -Force
 
-# Set global PATH (Explicitly includes PowerShell to avoid breakage)
-ENV Path="C:\nodejs;C:\python;C:\python\Scripts;C:\ffmpeg\bin;C:\Program Files\PowerShell\7;C:\Windows\system32;C:\Windows"
-
-# Build Frontend
+# --- BUILD FRONTEND ---
+# Using ABSOLUTE PATH to npm.cmd to ensure it's found even if PATH is broken
 COPY frontend/package*.json ./frontend/
-RUN cd frontend; npm install; npm run build
+RUN cd frontend; & C:\nodejs\npm.cmd install; & C:\nodejs\npm.cmd run build
 
-# Install Backend Requirements
+# --- INSTALL BACKEND ---
+# Using ABSOLUTE PATH to python.exe to ensure pip is found
 COPY backend/requirements.txt ./backend/
-RUN pip install --no-cache-dir -r backend/requirements.txt
+RUN & C:\python\python.exe -m pip install --no-cache-dir -r backend/requirements.txt
 
-# Final Copy and Run
+# --- FINAL SETUP ---
 COPY . .
 WORKDIR /app/backend
+
+# ONLY set the Path at the very end for the runtime environment
+ENV Path="C:\nodejs;C:\python;C:\python\Scripts;C:\ffmpeg\bin;C:\Program Files\PowerShell\7;C:\Windows\system32;C:\Windows"
 
 # Default port
 ENV PORT=8000
