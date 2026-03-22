@@ -4,41 +4,36 @@ FROM mcr.microsoft.com/powershell:nanoserver-ltsc2022
 USER ContainerAdministrator
 WORKDIR /app
 
-# 1. Install Node.js (v22.13.1)
-RUN pwsh -Command "$ErrorActionPreference = 'Stop'; \
-    Write-Host 'Installing Node.js...'; \
+# Set Shell to pwsh for all subsequent RUN commands
+SHELL ["pwsh", "-Command", "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue';"]
+
+# 1. & 2. & 3. Consolidated Manual Installation (Node, Python, FFmpeg)
+# Combining into one RUN prevents path breakage between steps and ensures stay inside Nanoserver limits.
+RUN Write-Host 'Installing dependencies...'; \
+    # Node.js (v22.13.1)
     Invoke-WebRequest -Uri 'https://nodejs.org/dist/v22.13.1/node-v22.13.1-win-x64.zip' -OutFile 'node.zip'; \
     Expand-Archive -Path 'node.zip' -DestinationPath 'C:\'; \
     Rename-Item -Path 'C:\node-v22.13.1-win-x64' -NewName 'C:\nodejs'; \
-    Remove-Item -Path 'node.zip' -Force"
-ENV PATH="C:\nodejs;%PATH%"
-
-# 2. Install Python (v3.11.9 embeddable)
-RUN pwsh -Command "$ErrorActionPreference = 'Stop'; \
-    Write-Host 'Installing Python...'; \
+    Remove-Item -Path 'node.zip' -Force; \
+    # Python (v3.11.9 embeddable)
     Invoke-WebRequest -Uri 'https://www.python.org/ftp/python/3.11.9/python-3.11.9-embed-amd64.zip' -OutFile 'python.zip'; \
     Expand-Archive -Path 'python.zip' -DestinationPath 'C:\python'; \
     Remove-Item -Path 'python.zip' -Force; \
-    Add-Content -Path 'C:\python\python311._pth' -Value 'import site'"
-ENV PATH="C:\python;%PATH%"
-
-# 3. Install Pip for embeddable Python
-RUN pwsh -Command "$ErrorActionPreference = 'Stop'; \
-    Write-Host 'Installing Pip...'; \
+    Add-Content -Path 'C:\python\python311._pth' -Value 'import site'; \
+    # Pip for embeddable Python
     Invoke-WebRequest -Uri 'https://bootstrap.pypa.io/get-pip.py' -OutFile 'get-pip.py'; \
-    python get-pip.py; \
-    Remove-Item -Path 'get-pip.py' -Force"
-
-# 4. Install FFmpeg (Static Build)
-RUN pwsh -Command "$ErrorActionPreference = 'Stop'; \
-    Write-Host 'Installing FFmpeg...'; \
+    & C:\python\python.exe get-pip.py; \
+    Remove-Item -Path 'get-pip.py' -Force; \
+    # FFmpeg (Static Build)
     Invoke-WebRequest -Uri 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip' -OutFile 'ffmpeg.zip'; \
     Expand-Archive -Path 'ffmpeg.zip' -DestinationPath 'C:\ffmpeg_temp'; \
     $ffmpegDir = Get-ChildItem -Path 'C:\ffmpeg_temp' -Filter 'ffmpeg-*' | Select-Object -First 1; \
     Move-Item -Path \"$($ffmpegDir.FullName)\" -Destination 'C:\ffmpeg'; \
     Remove-Item -Path 'C:\ffmpeg_temp' -Recurse -Force; \
-    Remove-Item -Path 'ffmpeg.zip' -Force"
-ENV PATH="C:\ffmpeg\bin;%PATH%"
+    Remove-Item -Path 'ffmpeg.zip' -Force
+
+# Set global PATH (Explicitly includes PowerShell to avoid breakage)
+ENV Path="C:\nodejs;C:\python;C:\python\Scripts;C:\ffmpeg\bin;C:\Program Files\PowerShell\7;C:\Windows\system32;C:\Windows"
 
 # Build Frontend
 COPY frontend/package*.json ./frontend/
