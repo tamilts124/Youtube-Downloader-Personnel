@@ -38,14 +38,23 @@ class ProxyManager:
     def get_status(self) -> Dict[str, Any]:
         return self._status
 
-    def get_random_proxy(self) -> str:
-        """Helper to get a random working proxy."""
+    def get_random_proxy(self, exclude: list = None) -> str:
+        """Helper to get a random working proxy, optionally excluding some."""
         with self._lock:
             working = self._status.get("working_proxies", [])
             if not working:
                 return None
+            
+            # Filter out excluded ones
+            options = working
+            if exclude:
+                options = [p for p in working if p not in exclude]
+            
+            if not options:
+                return None
+                
             import random
-            return random.choice(working)
+            return random.choice(options)
 
     def mark_failed(self, proxy: str):
         """Immediately removes a failed proxy from the working list."""

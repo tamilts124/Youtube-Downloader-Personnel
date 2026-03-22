@@ -176,74 +176,87 @@ class DownloadManager:
         if quality_or_format in ['best', '2160', '1440', '1080', '720', '480', '360', 'audio']:
             quality_target = quality_or_format
             format_id = "best"
-
-        ydl_opts = {
-            'quiet': True,
-            'no_warnings': True,
-            'extract_flat': True,
-            'force_ipv4': True,
-            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
-            'referer': 'https://www.youtube.com/',
-        }
         
-        # Add cookies if present
-        if os.path.exists(self.cookies_path):
-            ydl_opts['cookiefile'] = self.cookies_path
-            print(f"DEBUG: Playlist worker using cookies from: {self.cookies_path}")
-
-        # Add proxy if available
-        used_proxy = None
+        attempted_proxies = set()
+        max_attempts = 5
         if self.proxy_manager:
-            used_proxy = self.proxy_manager.get_random_proxy()
-            if used_proxy:
-                ydl_opts['proxy'] = used_proxy
-                print(f"DEBUG: Playlist worker using proxy: {used_proxy}")
-        try:
-            print(f"Expanding playlist: {url}")
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=False)
-                if info and 'entries' in info:
-                    entries = list(info['entries'])
-                    count = len(entries)
-                    if self.loop:
-                        asyncio.run_coroutine_threadsafe(self.broadcast({
-                            "type": "notification",
-                            "level": "success",
-                            "message": f"Found {count} items in playlist!"
-                        }), self.loop)
-
-                    for entry in entries:
-                         if not entry: continue
-                         title = entry.get('title') or entry.get('id') or 'Untitled Item'
-                         vid_id = entry.get('url') or entry.get('id')
-                         if not vid_id: continue
-                         
-                         video_url = vid_id
-                         if not video_url.startswith('http'):
-                              video_url = f"https://www.youtube.com/watch?v={video_url}"
-                         
-                         thumb = entry.get('thumbnail')
-                         if not thumb and entry.get('thumbnails'):
-                              thumb = entry.get('thumbnails')[-1].get('url')
-                         if not thumb: thumb = ""
-                         
-                         self.add_task(video_url, format_id, title, thumb, quality_target)
-
-                else:
-                    raise Exception("No content found in this playlist.")
-
-        except Exception as e:
-            error_msg = str(e).lower()
-            if used_proxy and ("confirm you're not a bot" in error_msg or "sign in to confirm" in error_msg):
-                self.proxy_manager.mark_failed(used_proxy)
+            working_count = self.proxy_manager.get_status().get("valid", 0)
+            max_attempts = min(10, working_count + 1)
             
-            print(f"Playlist expansion error for {url}: {e}")
-            if self.loop:
-                asyncio.run_coroutine_threadsafe(self.broadcast({
-                    "type": "notification",
-                    "level": "error",
-                    "message": f"Playlist error: {str(e)}"
-                }), self.loop)
+        for attempt in range(max_attempts):
+            ydl_opts = {
+                'quiet': True, 
+                'no_warnings': True, 
+                'extract_flat': True,
+                'force_ipv4': True,
+                'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+                'referer': 'https://www.youtube.com/',
+            }
+            if os.path.exists(self.cookies_path):
+                ydl_opts['cookiefile'] = self.cookies_path
+
+            used_proxy = None
+            if self.proxy_manager:
+                used_proxy = self.proxy_manager.get_random_proxy(exclude=list(attempted_proxies))
+                if used_proxy:
+                    ydl_opts['proxy'] = used_proxy
+                    print(f"DEBUG: Playlist attempt {attempt+1} using proxy: {used_proxy}")
+                else:
+                    print(f"DEBUG: Playlist attempt {attempt+1} using direct request.")
+
+            try:
+                print(f"Expanding playlist (Attempt {attempt+1}): {url}")
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(url, download=False)
+                    if info and 'entries' in info:
+                        entries = list(info['entries'])
+                        count = len(entries)
+                        if self.loop:
+                            asyncio.run_coroutine_threadsafe(self.broadcast({
+                                "type": "notification",
+                                "level": "success",
+                                "message": f"Found {count} items in playlist!"
+                            }), self.loop)
+
+                        for entry in entries:
+                             if not entry: continue
+                             title = entry.get('title') or entry.get('id') or 'Untitled Item'
+                             vid_id = entry.get('url') or entry.get('id')
+                             if not vid_id: continue
+                             
+                             video_url = vid_id
+                             if not video_url.startswith('http'):
+                                  video_url = f"https://www.youtube.com/watch?v={video_url}"
+                             
+                             thumb = entry.get('thumbnail')
+                             if not thumb and entry.get('thumbnails'):
+                                  thumb = entry.get('thumbnails')[-1].get('url')
+                             if not thumb: thumb = ""
+                             
+                             self.add_task(video_url, format_id, title, thumb, quality_target)
+                        return # SUCCESS!
+                    else:
+                        raise Exception("No content found in this playlist.")
+
+            except Exception as e:
+                error_msg = str(e).lower()
+                is_bot = "confirm you're not a bot" in error_msg or "sign in to confirm" in error_msg
+                
+                if used_proxy and is_bot:
+                    print(f"WARNING: Bot detected on proxy {used_proxy}. Pruning and retrying...")
+                    self.proxy_manager.mark_failed(used_proxy)
+                    attempted_proxies.add(used_proxy)
+                    continue # Try next proxy
+                
+                # Final failure
+                print(f"Playlist expansion error for {url}: {e}")
+                if self.loop:
+                    asyncio.run_coroutine_threadsafe(self.broadcast({
+                        "type": "notification",
+                        "level": "error",
+                        "message": f"Playlist error: {str(e)}"
+                    }), self.loop)
+                return
 
     def remove_task(self, task_id: str):
         """Helper to call delete_task for unified removal."""
@@ -440,54 +453,71 @@ class DownloadManager:
         else:
             format_str = f"{task.format_id}/bestvideo+bestaudio/best"
 
-        ydl_opts = {
-            'outtmpl': os.path.join(task.save_path, f'%(title)s_{task.id[:8]}.%(ext)s'),
-            'format': format_str,
-            'logger': MyLogger(),
-            'progress_hooks': [progress_hook],
-            'merge_output_format': 'mp4' if 'audio' not in format_str else None,
-            'continuedl': True,
-            'quiet': True,
-            'color': 'no_color',
-            'socket_timeout': 15,
-            'force_ipv4': True,
-            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
-            'referer': 'https://www.youtube.com/',
-        }
-        
-        # Add cookies if present
-        if os.path.exists(self.cookies_path):
-            ydl_opts['cookiefile'] = self.cookies_path
-            print(f"DEBUG: Download worker using cookies from: {self.cookies_path}")
-
-        # Add proxy if available
-        used_proxy = None
+        attempted_proxies = set()
+        max_attempts = 5
         if self.proxy_manager:
-            used_proxy = self.proxy_manager.get_random_proxy()
-            if used_proxy:
-                ydl_opts['proxy'] = used_proxy
-                print(f"DEBUG: Download worker using proxy: {used_proxy}")
+            working_count = self.proxy_manager.get_status().get("valid", 0)
+            max_attempts = min(10, working_count + 1)
 
         try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([task.url])
-            
-            if not task._stop_event.is_set():
-                task.status = "completed"
-                self._save_task_to_db(task)
-        except Exception as e:
-            if task._stop_event.is_set():
-                # Task explicitly stopped or paused
-                pass
-            else:
-                error_msg = str(e).lower()
-                if used_proxy and ("confirm you're not a bot" in error_msg or "sign in to confirm" in error_msg):
-                    self.proxy_manager.mark_failed(used_proxy)
+            for attempt in range(max_attempts):
+                if task._stop_event.is_set():
+                    break
+
+                ydl_opts = {
+                    'outtmpl': os.path.join(task.save_path, f'%(title)s_{task.id[:8]}.%(ext)s'),
+                    'format': format_str,
+                    'logger': MyLogger(),
+                    'progress_hooks': [progress_hook],
+                    'merge_output_format': 'mp4' if 'audio' not in format_str else None,
+                    'continuedl': True,
+                    'quiet': True,
+                    'color': 'no_color',
+                    'socket_timeout': 15,
+                    'force_ipv4': True,
+                    'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+                    'referer': 'https://www.youtube.com/',
+                }
                 
-                print(f"Download Error for {task.id}: {e}")
-                task.status = "error"
-                task.error_msg = str(e)
-                self._save_task_to_db(task)
+                if os.path.exists(self.cookies_path):
+                    ydl_opts['cookiefile'] = self.cookies_path
+
+                used_proxy = None
+                if self.proxy_manager:
+                    used_proxy = self.proxy_manager.get_random_proxy(exclude=list(attempted_proxies))
+                    if used_proxy:
+                        ydl_opts['proxy'] = used_proxy
+                        print(f"DEBUG: Download attempt {attempt+1} for {task.id} using proxy: {used_proxy}")
+                    else:
+                        print(f"DEBUG: Download attempt {attempt+1} for {task.id} using direct request.")
+
+                try:
+                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                        ydl.download([task.url])
+                    
+                    if not task._stop_event.is_set():
+                        task.status = "completed"
+                        self._save_task_to_db(task)
+                    return # SUCCESS!
+                except Exception as e:
+                    if task._stop_event.is_set():
+                        return # Task explicitly stopped or paused
+                    
+                    error_msg = str(e).lower()
+                    is_bot = "confirm you're not a bot" in error_msg or "sign in to confirm" in error_msg
+                    
+                    if used_proxy and is_bot:
+                        print(f"WARNING: Bot detected on proxy {used_proxy} for task {task.id}. Pruning and retrying...")
+                        self.proxy_manager.mark_failed(used_proxy)
+                        attempted_proxies.add(used_proxy)
+                        continue # Try next proxy
+                    
+                    # Final failure
+                    print(f"Download Error for {task.id}: {e}")
+                    task.status = "error"
+                    task.error_msg = str(e)
+                    self._save_task_to_db(task)
+                    return
         finally:
             if not task._stop_event.is_set() and task.status == "completed" and self.auto_save:
                 print(f"Auto-saving task {task.id}")

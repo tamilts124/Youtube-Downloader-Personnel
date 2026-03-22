@@ -42,117 +42,127 @@ async def get_video_info(video_req: VideoRequest, request: Request):
         ydl_opts['cookiefile'] = cookies_path
         print(f"DEBUG: Using cookies from {cookies_path}")
 
-    # Add proxy if available
-    proxy_manager = getattr(video_req, "proxy_manager", None) or getattr(request.app.state, "proxy_manager", None)
-    # Proxy selection for info extraction
-    used_proxy = None
+    # Proxy selection and retry logic for info extraction
+    attempted_proxies = set()
+    max_attempts = 5
     if proxy_manager:
-        used_proxy = proxy_manager.get_random_proxy()
-        if used_proxy:
-            ydl_opts['proxy'] = used_proxy
-            print(f"DEBUG: Using proxy {used_proxy}")
-
-    try:
-        def extract():
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                return ydl.extract_info(video_req.url, download=False)
-                
-        info = await run_sync(extract)
+        working_count = proxy_manager.get_status().get("valid", 0)
+        max_attempts = min(10, working_count + 1)
         
-        if 'entries' in info and len(info['entries']) > 0:
-            video_data = info['entries'][0]
-            if 'formats' not in video_data:
-                def extract_video_details():
-                    inner_opts = {
-                        'quiet': True, 
-                        'no_warnings': True, 
-                        'force_ipv4': True,
-                        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
-                        'referer': 'https://www.youtube.com/',
-                    }
-                    if used_proxy:
-                        inner_opts['proxy'] = used_proxy
+    for attempt in range(max_attempts):
+        used_proxy = None
+        if proxy_manager:
+            used_proxy = proxy_manager.get_random_proxy(exclude=list(attempted_proxies))
+            if used_proxy:
+                ydl_opts['proxy'] = used_proxy
+                print(f"DEBUG: Info attempt {attempt+1} using proxy {used_proxy}")
+            else:
+                print(f"DEBUG: Info attempt {attempt+1} using direct request.")
+
+        try:
+            def extract():
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    return ydl.extract_info(video_req.url, download=False)
                     
-                    cookies_path = get_cookies_path(request)
-                    if cookies_path and os.path.exists(cookies_path):
-                        inner_opts['cookiefile'] = cookies_path
-                    with yt_dlp.YoutubeDL(inner_opts) as ydl:
-                        return ydl.extract_info(video_data['url'] if 'url' in video_data else video_data['id'], download=False)
-                video_data = await run_sync(extract_video_details)
-        else:
-            video_data = info
+            info = await run_sync(extract)
+            
+            if 'entries' in info and len(info['entries']) > 0:
+                video_data = info['entries'][0]
+                if 'formats' not in video_data:
+                    def extract_video_details():
+                        inner_opts = {
+                            'quiet': True, 
+                            'no_warnings': True, 
+                            'force_ipv4': True,
+                            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+                            'referer': 'https://www.youtube.com/',
+                        }
+                        if used_proxy:
+                            inner_opts['proxy'] = used_proxy
+                        
+                        cookies_path = get_cookies_path(request)
+                        if cookies_path and os.path.exists(cookies_path):
+                            inner_opts['cookiefile'] = cookies_path
+                        with yt_dlp.YoutubeDL(inner_opts) as ydl:
+                            return ydl.extract_info(video_data['url'] if 'url' in video_data else video_data['id'], download=False)
+                    video_data = await run_sync(extract_video_details)
+            else:
+                video_data = info
 
-        formats = []
-        for f in video_data.get('formats', []):
-            ext = f.get('ext')
-            if ext in ['mp4', 'm4a', 'webm']:
-                resolution = f.get('resolution')
-                if not resolution or resolution == 'multiple':
-                    if f.get('vcodec') == 'none':
-                        resolution = 'audio only'
-                    else:
-                        height = f.get('height')
-                        resolution = f"{height}p" if height else "unknown"
+            formats = []
+            for f in video_data.get('formats', []):
+                ext = f.get('ext')
+                if ext in ['mp4', 'm4a', 'webm']:
+                    resolution = f.get('resolution')
+                    if not resolution or resolution == 'multiple':
+                        if f.get('vcodec') == 'none':
+                            resolution = 'audio only'
+                        else:
+                            height = f.get('height')
+                            resolution = f"{height}p" if height else "unknown"
 
-                formats.append({
-                    'format_id': f['format_id'],
-                    'ext': ext,
-                    'resolution': resolution,
-                    'note': f.get('format_note', f.get('format', '')),
-                    'acodec': f.get('acodec', 'none'),
-                    'vcodec': f.get('vcodec', 'none'),
-                    'filesize_approx': f.get('filesize_approx') or f.get('filesize', 0)
-                })
+                    formats.append({
+                        'format_id': f['format_id'],
+                        'ext': ext,
+                        'resolution': resolution,
+                        'note': f.get('format_note', f.get('format', '')),
+                        'acodec': f.get('acodec', 'none'),
+                        'vcodec': f.get('vcodec', 'none'),
+                        'filesize_approx': f.get('filesize_approx') or f.get('filesize', 0)
+                    })
+                    
+            quality_options = [
+                {"label": "Best Quality", "value": "best"},
+                {"label": "4K (2160p)", "value": "2160"},
+                {"label": "2K (1440p)", "value": "1440"},
+                {"label": "Full HD (1080p)", "value": "1080"},
+                {"label": "HD (720p)", "value": "720"},
+                {"label": "SD (480p)", "value": "480"},
+                {"label": "360p", "value": "360"},
+                {"label": "Audio Only", "value": "audio"}
+            ]
+                    
+            return {
+                "title": video_data.get('title'),
+                "thumbnail": video_data.get('thumbnail') or (video_data.get('thumbnails')[-1].get('url') if video_data.get('thumbnails') else None),
+                "duration": video_data.get('duration'),
+                "uploader": video_data.get('uploader'),
+                "formats": formats,
+                "is_playlist": 'entries' in info,
+                "playlist_count": len(info['entries']) if 'entries' in info else 0,
+                "quality_options": quality_options
+            }
+        except Exception as e:
+            error_msg = str(e).lower()
+            is_bot = "confirm you're not a bot" in error_msg or "sign in to confirm" in error_msg
+            
+            if used_proxy and is_bot:
+                print(f"WARNING: Bot detected on proxy {used_proxy}. Pruning and retrying...")
+                proxy_manager.mark_failed(used_proxy)
+                attempted_proxies.add(used_proxy)
+                continue # Try next proxy or direct
+            
+            # Final failure handling
+            cookies_path = get_cookies_path(request)
+            has_cookies = cookies_path and os.path.exists(cookies_path)
+            
+            if is_bot:
+                msg = "YouTube is blocking the request (Bot Detection). Please refresh your proxies or upload a fresh cookies.txt using the Settings icon ⚙️."
+                if has_cookies:
+                    msg = "YouTube is still blocking this server. Your cookies may be EXPIRED, or all proxies are flagged. Try a fresh export and refreshing your proxies ⚙️."
                 
-        quality_options = [
-            {"label": "Best Quality", "value": "best"},
-            {"label": "4K (2160p)", "value": "2160"},
-            {"label": "2K (1440p)", "value": "1440"},
-            {"label": "Full HD (1080p)", "value": "1080"},
-            {"label": "HD (720p)", "value": "720"},
-            {"label": "SD (480p)", "value": "480"},
-            {"label": "360p", "value": "360"},
-            {"label": "Audio Only", "value": "audio"}
-        ]
-                
-        return {
-            "title": video_data.get('title'),
-            "thumbnail": video_data.get('thumbnail') or (video_data.get('thumbnails')[-1].get('url') if video_data.get('thumbnails') else None),
-            "duration": video_data.get('duration'),
-            "uploader": video_data.get('uploader'),
-            "formats": formats,
-            "is_playlist": 'entries' in info,
-            "playlist_count": len(info['entries']) if 'entries' in info else 0,
-            "quality_options": quality_options
-        }
-    except Exception as e:
-        error_msg = str(e)
-        
-        # Pruning: if we used a proxy and it hit bot detection, mark it failed
-        if used_proxy and ("confirm you're not a bot" in error_msg.lower() or "sign in to confirm" in error_msg.lower()):
-            proxy_manager.mark_failed(used_proxy)
-
-        cookies_path = get_cookies_path(request)
-        has_cookies = cookies_path and os.path.exists(cookies_path)
-        
-        if "confirm you're not a bot" in error_msg.lower() or "sign in to confirm" in error_msg.lower():
-            if has_cookies:
                 return {
                     "error": "bot_detection", 
-                    "message": "YouTube is still blocking this server. Your cookies may be EXPIRED - try a fresh export. If that fails, your server IP might be flagged by YouTube."
+                    "message": msg
                 }
-            return {
-                "error": "bot_detection", 
-                "message": "YouTube is blocking the request (Bot Detection). Please upload a fresh cookies.txt using the Settings icon ⚙️."
-            }
 
-        if "javascript" in error_msg.lower() or "deno" in error_msg.lower():
-            return {
-                "error": "missing_runtime",
-                "message": "Missing JavaScript Runtime (Deno/Node). yt-dlp needs this to extract content info on the server."
-            }
+            if "javascript" in error_msg or "deno" in error_msg:
+                return {
+                    "error": "missing_runtime",
+                    "message": "Missing JavaScript Runtime (Deno/Node). yt-dlp needs this to extract content info on the server."
+                }
 
-        return {"error": error_msg}
+            return {"error": error_msg}
 
 @router.post("/download")
 async def start_download(req: DownloadRequest, request: Request):
