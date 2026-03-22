@@ -52,6 +52,7 @@ WORKDIR /app/backend
 
 # Set the final Path for the running application
 ENV Path="C:\nodejs;C:\python;C:\python\Scripts;C:\ffmpeg\bin;C:\Program Files\PowerShell\7;C:\Windows\system32;C:\Windows"
+ENV SSL_CERT_FILE="C:\python\cacert.pem"
 
 # Default port
 ENV PORT=8000
