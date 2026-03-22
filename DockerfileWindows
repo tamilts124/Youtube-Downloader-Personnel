@@ -1,21 +1,42 @@
 # --- Stage 1: Build Frontend ---
-FROM node:windowsservercore-ltsc2022 AS frontend-builder
+FROM mcr.microsoft.com/windows/servercore:ltsc2022 AS frontend-builder
+
 WORKDIR /app/frontend
+
+# Set PowerShell as default shell
+SHELL ["powershell", "-Command", "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue';"]
+
+# Install Node.js manually
+# Using Node 20.18.0 (LTS)
+RUN Write-Host "Downloading Node.js..." ; \
+    Invoke-WebRequest -Uri "https://nodejs.org/dist/v20.18.0/node-v20.18.0-win-x64.zip" -OutFile "node.zip" ; \
+    Write-Host "Extracting Node.js..." ; \
+    Expand-Archive -Path "node.zip" -DestinationPath "C:\" ; \
+    Rename-Item -Path "C:\node-v20.18.0-win-x64" -NewName "C:\nodejs" ; \
+    $env:PATH = 'C:\nodejs;' + $env:PATH ; \
+    [Environment]::SetEnvironmentVariable('Path', $env:PATH, 'Machine') ; \
+    Remove-Item -Path "node.zip" -Force ; \
+    Write-Host "Node.js installed successfully."
+
+# Add Node to path for the rest of this stage
+ENV PATH="C:\nodejs;${PATH}"
+
+# Build Frontend
 COPY frontend/package*.json ./
 RUN npm install
 COPY frontend/ ./
 RUN npm run build
 
 # --- Stage 2: Final Image ---
-FROM python:3.11-windowsservercore-ltsc2022
+# Using Microsoft's official Python image for Windows Server Core 2022
+FROM mcr.microsoft.com/windows-cssc/python:3.11-servercore-ltsc2022
 
 WORKDIR /app
 
-# Set PowerShell as default shell for setup
+# Set PowerShell as default shell
 SHELL ["powershell", "-Command", "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue';"]
 
 # Install FFmpeg
-# Note: This downloads the essentials build from gyan.dev
 RUN Write-Host "Downloading FFmpeg..." ; \
     Invoke-WebRequest -Uri "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" -OutFile "ffmpeg.zip" ; \
     Write-Host "Extracting FFmpeg..." ; \
@@ -37,10 +58,10 @@ COPY backend/ ./backend/
 # Copy built frontend from Stage 1
 COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
 
-# Set the working directory to backend for the CMD
+# Set the working directory to backend
 WORKDIR /app/backend
 
-# Default port for the application
+# Default port
 ENV PORT=8000
 EXPOSE 8000
 
