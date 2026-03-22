@@ -48,7 +48,7 @@ async def websocket_endpoint(websocket: WebSocket):
         manager = state.connection_manager
         manager.disconnect(websocket)
 
-@router.post("/api/info")
+@router.post("/info")
 async def get_video_info(video_req: VideoRequest):
     ydl_opts = {
         'quiet': True,
@@ -128,7 +128,7 @@ async def get_video_info(video_req: VideoRequest):
     except Exception as e:
         return {"error": str(e)}
 
-@router.post("/api/download")
+@router.post("/download")
 async def start_download(req: DownloadRequest, request: Request):
     dl_manager = request.app.state.dl_manager
     if dl_manager:
@@ -140,7 +140,7 @@ async def start_download(req: DownloadRequest, request: Request):
             return {"status": "success", "task_id": task.id}
     return {"status": "error"}
 
-@router.get("/api/download/{task_id}")
+@router.get("/download/{task_id}")
 async def download_task_file(task_id: str, request: Request, background_tasks: BackgroundTasks):
     dl_manager = request.app.state.dl_manager
     file_path = dl_manager.get_task_file_path(task_id)
@@ -156,63 +156,63 @@ async def download_task_file(task_id: str, request: Request, background_tasks: B
         media_type='application/octet-stream'
     )
 
-@router.post("/api/save")
+@router.post("/save")
 async def save_task(task_req: TaskRequest, request: Request):
     dl_manager = request.app.state.dl_manager
     if dl_manager.save_task(task_req.task_id):
         return {"status": "success"}
     raise HTTPException(status_code=400)
 
-@router.post("/api/remove")
+@router.post("/remove")
 async def remove_task_endpoint(task_req: TaskRequest, request: Request):
     dl_manager = request.app.state.dl_manager
     if dl_manager.delete_task(task_req.task_id):
         return {"status": "success"}
     raise HTTPException(status_code=400, detail="Could not remove task")
 
-@router.post("/api/pause")
+@router.post("/pause")
 async def pause_download(req: ActionRequest, request: Request):
     dl_manager = request.app.state.dl_manager
     if dl_manager:
         dl_manager.pause_task(req.task_id)
         return {"status": "paused"}
 
-@router.post("/api/resume")
+@router.post("/resume")
 async def resume_download(req: ActionRequest, request: Request):
     dl_manager = request.app.state.dl_manager
     if dl_manager:
         dl_manager.resume_task(req.task_id)
         return {"status": "resumed"}
 
-@router.post("/api/cancel")
+@router.post("/cancel")
 async def cancel_download(req: ActionRequest, request: Request):
     dl_manager = request.app.state.dl_manager
     if dl_manager:
         dl_manager.remove_task(req.task_id)
         return {"status": "cancelled"}
 
-@router.post("/api/pause_all")
+@router.post("/pause_all")
 async def pause_all(request: Request):
     dl_manager = request.app.state.dl_manager
     if dl_manager:
         dl_manager.pause_all()
         return {"status": "all_paused"}
 
-@router.post("/api/resume_all")
+@router.post("/resume_all")
 async def resume_all(request: Request):
     dl_manager = request.app.state.dl_manager
     if dl_manager:
         dl_manager.resume_all()
         return {"status": "all_resumed"}
 
-@router.post("/api/cancel_all")
+@router.post("/cancel_all")
 async def cancel_all(request: Request):
     dl_manager = request.app.state.dl_manager
     if dl_manager:
         dl_manager.cancel_all()
         return {"status": "all_cancelled"}
 
-@router.post("/api/settings/autosave")
+@router.post("/settings/autosave")
 async def set_autosave(req: Dict[str, bool], request: Request):
     dl_manager = request.app.state.dl_manager
     if dl_manager:
@@ -220,21 +220,21 @@ async def set_autosave(req: Dict[str, bool], request: Request):
         dl_manager.set_auto_save(state)
         return {"status": "success", "auto_save": state}
 
-@router.post("/api/resubmit")
+@router.post("/resubmit")
 async def resubmit_download(req: TaskActionRequest, request: Request):
     dl_manager = request.app.state.dl_manager
     if dl_manager:
         dl_manager.resubmit_task(req.task_id)
         return {"status": "resubmitted"}
 
-@router.post("/api/priority")
+@router.post("/priority")
 async def update_priority(req: PriorityRequest, request: Request):
     dl_manager = request.app.state.dl_manager
     if dl_manager:
         dl_manager.update_priority(req.queue)
         return {"status": "updated"}
 
-@router.post("/api/settings/concurrency")
+@router.post("/settings/concurrency")
 async def set_concurrency(con_req: ConcurrencyRequest, request: Request):
     dl_manager = request.app.state.dl_manager
     if dl_manager:
@@ -245,11 +245,16 @@ async def set_concurrency(con_req: ConcurrencyRequest, request: Request):
 # --- YouTube Cookie Management ---
 COOKIES_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "cookies.txt"))
 
-@router.get("/api/settings/cookies")
+@router.get("/settings/cookies")
 async def get_cookie_status():
     return {"exists": os.path.exists(COOKIES_PATH)}
 
-@router.post("/api/settings/cookies/upload")
+@router.get("/settings/cookies/upload")
+async def test_upload_route():
+    return {"message": "POST to this endpoint to upload cookies.txt"}
+
+@router.post("/settings/cookies/upload")
+@router.post("/settings/cookies/upload/")
 async def upload_cookies(file: UploadFile = File(...)):
     try:
         with open(COOKIES_PATH, "wb") as buffer:
@@ -258,7 +263,7 @@ async def upload_cookies(file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.delete("/api/settings/cookies")
+@router.delete("/settings/cookies")
 async def delete_cookies():
     if os.path.exists(COOKIES_PATH):
         try:

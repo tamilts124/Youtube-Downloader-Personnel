@@ -4,7 +4,7 @@ const getApiBase = () => {
   const envUrl = import.meta.env.VITE_API_URL as string
   if (envUrl) return envUrl
 
-  if (typeof window !== 'undefined' && window.location.port === '5173') {
+  if (import.meta.env.DEV) {
     return `${window.location.protocol}//${window.location.hostname}:8000`
   }
   return '' // Relative for production
