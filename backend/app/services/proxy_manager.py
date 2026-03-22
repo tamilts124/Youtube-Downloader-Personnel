@@ -38,6 +38,25 @@ class ProxyManager:
     def get_status(self) -> Dict[str, Any]:
         return self._status
 
+    def get_random_proxy(self) -> str:
+        """Helper to get a random working proxy."""
+        with self._lock:
+            working = self._status.get("working_proxies", [])
+            if not working:
+                return None
+            import random
+            return random.choice(working)
+
+    def mark_failed(self, proxy: str):
+        """Immediately removes a failed proxy from the working list."""
+        with self._lock:
+            working = self._status.get("working_proxies", [])
+            if proxy in working:
+                working.remove(proxy)
+                self._status["valid"] = len(working)
+                self._save_status(force=True)
+                print(f"DEBUG: Proxy {proxy} marked as failed and removed.")
+
     async def fetch_free_proxies(self):
         url = "https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&proxy_format=protocolipport&format=text"
         try:

@@ -44,12 +44,13 @@ async def get_video_info(video_req: VideoRequest, request: Request):
 
     # Add proxy if available
     proxy_manager = getattr(video_req, "proxy_manager", None) or getattr(request.app.state, "proxy_manager", None)
+    # Proxy selection for info extraction
+    used_proxy = None
     if proxy_manager:
-        status = proxy_manager.get_status()
-        if status.get("working_proxies"):
-            # Use the first working proxy for info extraction
-            ydl_opts['proxy'] = status["working_proxies"][0]
-            print(f"DEBUG: Using proxy {ydl_opts['proxy']}")
+        used_proxy = proxy_manager.get_random_proxy()
+        if used_proxy:
+            ydl_opts['proxy'] = used_proxy
+            print(f"DEBUG: Using proxy {used_proxy}")
 
     try:
         def extract():
@@ -69,6 +70,9 @@ async def get_video_info(video_req: VideoRequest, request: Request):
                         'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
                         'referer': 'https://www.youtube.com/',
                     }
+                    if used_proxy:
+                        inner_opts['proxy'] = used_proxy
+                    
                     cookies_path = get_cookies_path(request)
                     if cookies_path and os.path.exists(cookies_path):
                         inner_opts['cookiefile'] = cookies_path
@@ -123,6 +127,11 @@ async def get_video_info(video_req: VideoRequest, request: Request):
         }
     except Exception as e:
         error_msg = str(e)
+        
+        # Pruning: if we used a proxy and it hit bot detection, mark it failed
+        if used_proxy and ("confirm you're not a bot" in error_msg.lower() or "sign in to confirm" in error_msg.lower()):
+            proxy_manager.mark_failed(used_proxy)
+
         cookies_path = get_cookies_path(request)
         has_cookies = cookies_path and os.path.exists(cookies_path)
         

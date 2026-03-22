@@ -192,11 +192,12 @@ class DownloadManager:
             print(f"DEBUG: Playlist worker using cookies from: {self.cookies_path}")
 
         # Add proxy if available
+        used_proxy = None
         if self.proxy_manager:
-            status = self.proxy_manager.get_status()
-            if status.get("working_proxies"):
-                ydl_opts['proxy'] = status["working_proxies"][0]
-                print(f"DEBUG: Playlist worker using proxy: {ydl_opts['proxy']}")
+            used_proxy = self.proxy_manager.get_random_proxy()
+            if used_proxy:
+                ydl_opts['proxy'] = used_proxy
+                print(f"DEBUG: Playlist worker using proxy: {used_proxy}")
         try:
             print(f"Expanding playlist: {url}")
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -232,6 +233,10 @@ class DownloadManager:
                     raise Exception("No content found in this playlist.")
 
         except Exception as e:
+            error_msg = str(e).lower()
+            if used_proxy and ("confirm you're not a bot" in error_msg or "sign in to confirm" in error_msg):
+                self.proxy_manager.mark_failed(used_proxy)
+            
             print(f"Playlist expansion error for {url}: {e}")
             if self.loop:
                 asyncio.run_coroutine_threadsafe(self.broadcast({
@@ -456,11 +461,12 @@ class DownloadManager:
             print(f"DEBUG: Download worker using cookies from: {self.cookies_path}")
 
         # Add proxy if available
+        used_proxy = None
         if self.proxy_manager:
-            status = self.proxy_manager.get_status()
-            if status.get("working_proxies"):
-                ydl_opts['proxy'] = status["working_proxies"][0]
-                print(f"DEBUG: Download worker using proxy: {ydl_opts['proxy']}")
+            used_proxy = self.proxy_manager.get_random_proxy()
+            if used_proxy:
+                ydl_opts['proxy'] = used_proxy
+                print(f"DEBUG: Download worker using proxy: {used_proxy}")
 
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -474,6 +480,10 @@ class DownloadManager:
                 # Task explicitly stopped or paused
                 pass
             else:
+                error_msg = str(e).lower()
+                if used_proxy and ("confirm you're not a bot" in error_msg or "sign in to confirm" in error_msg):
+                    self.proxy_manager.mark_failed(used_proxy)
+                
                 print(f"Download Error for {task.id}: {e}")
                 task.status = "error"
                 task.error_msg = str(e)
