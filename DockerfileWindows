@@ -1,4 +1,4 @@
-# --- Bulletproof Minimal Windows Dockerfile (Nanoserver) ---
+# --- Bulletproof Minimal Windows Dockerfile (v2) ---
 FROM mcr.microsoft.com/powershell:nanoserver-ltsc2022
 
 USER ContainerAdministrator
@@ -33,20 +33,26 @@ RUN Write-Host 'Installing dependencies...'; \
     Remove-Item -Path 'ffmpeg.zip' -Force
 
 # --- BUILD FRONTEND ---
-# Using ABSOLUTE PATH to npm.cmd to ensure it's found even if PATH is broken
+# We prepend C:\nodejs to $env:Path LOCALLY for this session.
+# This ensures sub-processes (Vite, TSC) find 'node'.
 COPY frontend/package*.json ./frontend/
-RUN cd frontend; & C:\nodejs\npm.cmd install; & C:\nodejs\npm.cmd run build
+RUN $env:Path = 'C:\nodejs;' + $env:Path; \
+    cd frontend; \
+    & C:\nodejs\npm.cmd install; \
+    & C:\nodejs\npm.cmd run build
 
 # --- INSTALL BACKEND ---
-# Using ABSOLUTE PATH to python.exe to ensure pip is found
+# Prepend Python to $env:Path LOCALLY for this session.
 COPY backend/requirements.txt ./backend/
-RUN & C:\python\python.exe -m pip install --no-cache-dir -r backend/requirements.txt
+RUN $env:Path = 'C:\python;C:\python\Scripts;' + $env:Path; \
+    & C:\python\python.exe -m pip install --no-cache-dir -r backend/requirements.txt
 
 # --- FINAL SETUP ---
 COPY . .
 WORKDIR /app/backend
 
-# ONLY set the Path at the very end for the runtime environment
+# Finally set the global Path for the runtime environment.
+# Note: In Windows containers, it is usually 'Path' with capital P.
 ENV Path="C:\nodejs;C:\python;C:\python\Scripts;C:\ffmpeg\bin;C:\Program Files\PowerShell\7;C:\Windows\system32;C:\Windows"
 
 # Default port
