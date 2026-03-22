@@ -11,7 +11,7 @@ RUN pwsh -Command "$ErrorActionPreference = 'Stop'; \
     Expand-Archive -Path 'node.zip' -DestinationPath 'C:\'; \
     Rename-Item -Path 'C:\node-v22.13.1-win-x64' -NewName 'C:\nodejs'; \
     Remove-Item -Path 'node.zip' -Force"
-ENV PATH="C:\nodejs;${PATH}"
+ENV PATH="C:\nodejs;%PATH%"
 
 # 2. Install Python (v3.11.9 embeddable)
 RUN pwsh -Command "$ErrorActionPreference = 'Stop'; \
@@ -20,7 +20,7 @@ RUN pwsh -Command "$ErrorActionPreference = 'Stop'; \
     Expand-Archive -Path 'python.zip' -DestinationPath 'C:\python'; \
     Remove-Item -Path 'python.zip' -Force; \
     Add-Content -Path 'C:\python\python311._pth' -Value 'import site'"
-ENV PATH="C:\python;${PATH}"
+ENV PATH="C:\python;%PATH%"
 
 # 3. Install Pip for embeddable Python
 RUN pwsh -Command "$ErrorActionPreference = 'Stop'; \
@@ -38,7 +38,7 @@ RUN pwsh -Command "$ErrorActionPreference = 'Stop'; \
     Move-Item -Path \"$($ffmpegDir.FullName)\" -Destination 'C:\ffmpeg'; \
     Remove-Item -Path 'C:\ffmpeg_temp' -Recurse -Force; \
     Remove-Item -Path 'ffmpeg.zip' -Force"
-ENV PATH="C:\ffmpeg\bin;${PATH}"
+ENV PATH="C:\ffmpeg\bin;%PATH%"
 
 # Build Frontend
 COPY frontend/package*.json ./frontend/
