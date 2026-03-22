@@ -152,11 +152,21 @@ async def get_video_info(video_req: VideoRequest, request: Request):
             cookies_path = get_cookies_path(request)
             has_cookies = cookies_path and os.path.exists(cookies_path)
             
-            is_bot = "bot detection" in error_msg
+            bot_strings = ["bot detection", "sign in to confirm", "not a bot", "downloader_bot", "403: forbidden"]
+            is_bot = any(s in error_msg for s in bot_strings)
+            
             if is_bot:
-                msg = "YouTube is blocking the request (Bot Detection). Please refresh your proxies or upload a fresh cookies.txt using the Settings icon ⚙️."
-                if has_cookies:
-                    msg = "YouTube is still blocking this server. Your cookies may be EXPIRED, or all proxies are flagged. Try a fresh export and refreshing your proxies ⚙️."
+                # Dynamic troubleshooting guidance based on user's current configuration
+                proxy_count = proxy_manager.get_status().get("valid", 0) if proxy_manager else 0
+                
+                if proxy_count > 0:
+                    msg = "YouTube is blocking the request (Bot Detection). Try 'Refresh Connection' in Settings ⚙️ or upload a fresh cookies.txt to bypass."
+                    if has_cookies:
+                        msg = "YouTube is still blocking this server. Your cookies may be EXPIRED, or your connections are flagged. Try refreshing connections or uploading fresh cookies ⚙️."
+                else:
+                    msg = "YouTube is blocking the request (Bot Detection). Try adding some connection identities in Settings ⚙️ or upload a fresh cookies.txt to bypass."
+                    if has_cookies:
+                        msg = "YouTube is still blocking this server. Your cookies may be EXPIRED, please upload a fresh cookies.txt or try adding some connection identities ⚙️."
                 
                 return {
                     "error": "bot_detection", 

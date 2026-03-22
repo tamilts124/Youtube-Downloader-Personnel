@@ -90,10 +90,33 @@ export const removeTask = async (task_id: string) => {
   })
 }
 
-export const fetchFileBlob = async (task_id: string): Promise<Blob> => {
+export const fetchFileBlob = async (task_id: string, onProgress?: (percent: number) => void): Promise<Blob> => {
   const res = await fetch(`${API_BASE}/api/download/${task_id}`);
   if (!res.ok) throw new Error('Download failed');
-  return res.blob();
+
+  const contentLength = res.headers.get('content-length');
+  if (!contentLength || !onProgress) {
+    return res.blob();
+  }
+
+  const total = parseInt(contentLength, 10);
+  let loaded = 0;
+
+  const reader = res.body?.getReader();
+  if (!reader) return res.blob();
+
+  const chunks: Uint8Array[] = [];
+  
+  while(true) {
+    const {done, value} = await reader.read();
+    if (done) break;
+    
+    chunks.push(value);
+    loaded += value.length;
+    onProgress(Math.round((loaded / total) * 100));
+  }
+
+  return new Blob(chunks as BlobPart[]);
 }
 
 export const rotateProxy = async (task_id: string) => {

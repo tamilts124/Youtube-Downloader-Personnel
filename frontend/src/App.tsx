@@ -90,9 +90,13 @@ function AppContent() {
 
   const downloadTaskFile = async (task: DownloadTask) => {
     try {
-      showNotification(`Saving ${task.title} for your device...`, "info");
+      // Set status to saving immediately
+      setTasks(prev => prev.map(t => t.id === task.id ? { ...t, status: 'saving', progress: 0 } : t));
       
-      const blob = await api.fetchFileBlob(task.id);
+      const blob = await api.fetchFileBlob(task.id, (percent) => {
+        setTasks(prev => prev.map(t => t.id === task.id ? { ...t, progress: percent } : t));
+      });
+
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -101,14 +105,24 @@ function AppContent() {
       a.click();
       window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
-
-      // Remove from list immediately for snappy feel
+      // Remove from list after fully saved
       setTasks(prev => prev.filter(t => t.id !== task.id));
       
+      showNotification(`${task.title} downloaded successfully!`, "success");
+      // Anti-Ghosting: Tell server updates to ignore this ID
+      deletedIds.current.add(task.id);
+
       // Tell server to delete
       await api.removeTask(task.id);
+
+      // Clean up deletedIds after 10s
+      setTimeout(() => {
+        deletedIds.current.delete(task.id);
+      }, 10000);
     } catch (err) {
       showNotification("Failed to save to your device.", "error");
+      // Revert status to completed so they can try again
+      setTasks(prev => prev.map(t => t.id === task.id ? { ...t, status: 'completed' } : t));
       console.error(err);
     }
   };
@@ -137,7 +151,7 @@ function AppContent() {
       if (data.error === "bot_detection") {
         showNotification(data.message || "YouTube wants you to sign in. Please check your cookies.", "error")
       } else if (data.error) {
-        showNotification("Oops! We couldn't find that content. Please check the link.", "error")
+        showNotification(data.message || data.error || "Oops! We couldn't find that content. Please check the link.", "error")
       } else {
         setVideoInfo(data)
         if (data.is_playlist) {
@@ -200,23 +214,23 @@ function AppContent() {
       // All these actions should remove the task from the active list
       if (action === 'delete' || action === 'cancel' || action === 'save') {
         const task = tasks.find(t => t.id === task_id);
-        
-        // Anti-Ghosting: Add to deletedIds set immediately
-        deletedIds.current.add(task_id);
-
-        // Snappy UI: Remove from list first
-        setTasks(prev => prev.filter(t => t.id !== task_id));
 
         if (action === 'save' && task) {
              await downloadTaskFile(task);
         } else {
-             await api.removeTask(task_id);
-        }
+             // Snappy UI: Remove from list first for delete/cancel
+             setTasks(prev => prev.filter(t => t.id !== task_id));
 
-        // Clean up deletedIds after 10s
-        setTimeout(() => {
-          deletedIds.current.delete(task_id);
-        }, 10000);
+             // Anti-Ghosting: Tell server updates to ignore this ID
+             deletedIds.current.add(task_id);
+
+             await api.removeTask(task_id);
+
+             // Clean up deletedIds after 10s
+             setTimeout(() => {
+               deletedIds.current.delete(task_id);
+             }, 10000);
+        }
 
         return;
       }

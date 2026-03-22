@@ -16,6 +16,7 @@ export const QueueItem: React.FC<QueueItemProps> = ({ task, provided, snapshot, 
       case 'error': return 'Something went wrong'
       case 'paused': return 'Paused'
       case 'queued': return 'Waiting in line'
+      case 'saving': return 'Downloading to Device...'
       default: return status
     }
   }
@@ -24,6 +25,7 @@ export const QueueItem: React.FC<QueueItemProps> = ({ task, provided, snapshot, 
     switch (status) {
       case 'downloading': return 'text-indigo-400'
       case 'completed': return 'text-emerald-400'
+      case 'saving': return 'text-sky-400'
       case 'error': return 'text-rose-400'
       case 'paused': return 'text-amber-400'
       default: return 'text-zinc-500'
@@ -71,9 +73,9 @@ export const QueueItem: React.FC<QueueItemProps> = ({ task, provided, snapshot, 
         </div>
         
         <div className="flex justify-between items-center text-[10px] font-bold tracking-wider text-zinc-500 uppercase">
-          <span className="text-zinc-400">{task.progress?.toFixed(0) || 0}% Done</span>
+          <span className="text-zinc-400">{task.progress?.toFixed(0) || 0}% {task.status === 'saving' ? 'Downloaded' : 'Done'}</span>
           <div className="flex gap-4">
-            {task.status === 'downloading' && (
+            {(task.status === 'downloading' || task.status === 'saving') && (
               <>
                 <span className="text-indigo-400/80">{task.speed}</span>
                 <span className="text-zinc-400">{task.eta} left</span>

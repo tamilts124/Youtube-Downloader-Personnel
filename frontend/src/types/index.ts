@@ -21,7 +21,7 @@ export type VideoInfo = {
   quality_options?: { label: string, value: string }[]
 }
 
-export type TaskStatus = 'queued' | 'downloading' | 'paused' | 'completed' | 'downloaded' | 'error' | 'cancelled'
+export type TaskStatus = 'queued' | 'downloading' | 'paused' | 'completed' | 'downloaded' | 'error' | 'cancelled' | 'saving'
 
 export type DownloadTask = {
   id: string
