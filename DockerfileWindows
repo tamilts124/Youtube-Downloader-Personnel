@@ -26,6 +26,8 @@ RUN Write-Host 'Installing base tools...'; \
     Expand-Archive -Path 'ffmpeg.zip' -DestinationPath 'C:\ffmpeg_temp'; \
     $ffmpegDir = Get-ChildItem -Path 'C:\ffmpeg_temp' -Filter 'ffmpeg-*' | Select-Object -First 1; \
     Move-Item -Path \"$($ffmpegDir.FullName)\" -Destination 'C:\ffmpeg'; \
+    # SSL Certificates (Fix for Nanoserver Python)
+    Invoke-WebRequest -Uri 'https://curl.se/ca/cacert.pem' -OutFile 'C:\python\cacert.pem'; \
     # Cleanup
     Remove-Item *.zip, get-pip.py, C:\ffmpeg_temp -Recurse -Force; \
     Write-Host 'Base tools installed successfully.'
