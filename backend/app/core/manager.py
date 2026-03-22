@@ -100,14 +100,19 @@ class DownloadManager:
             'quiet': True,
             'no_warnings': True,
             'extract_flat': True,
-            'force_ipv4': True
+            'force_ipv4': True,
+            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+            'referer': 'https://www.youtube.com/',
         }
         
-        # Add cookies if present in backend directory
-        cookies_path = os.path.join(os.path.dirname(__file__), "..", "..", "cookies.txt")
-        if os.path.exists(cookies_path):
+        # Add cookies if present (check backend/ and root/)
+        p1 = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "cookies.txt"))
+        p2 = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "cookies.txt"))
+        cookies_path = p1 if os.path.exists(p1) else (p2 if os.path.exists(p2) else None)
+        
+        if cookies_path:
             ydl_opts['cookiefile'] = cookies_path
-            print(f"Using cookies from: {cookies_path}")
+            print(f"DEBUG: Playlist worker using cookies from: {cookies_path}")
         try:
             print(f"Expanding playlist: {url}")
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -361,13 +366,19 @@ class DownloadManager:
             'quiet': True,
             'color': 'no_color',
             'socket_timeout': 15,
-            'force_ipv4': True
+            'force_ipv4': True,
+            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+            'referer': 'https://www.youtube.com/',
         }
         
-        # Add cookies if present in backend directory
-        cookies_path = os.path.join(os.path.dirname(__file__), "..", "..", "cookies.txt")
-        if os.path.exists(cookies_path):
+        # Add cookies if present (check backend/ and root/)
+        p1 = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "cookies.txt"))
+        p2 = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "cookies.txt"))
+        cookies_path = p1 if os.path.exists(p1) else (p2 if os.path.exists(p2) else None)
+        
+        if cookies_path:
             ydl_opts['cookiefile'] = cookies_path
+            print(f"DEBUG: Download worker using cookies from: {cookies_path}")
 
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:

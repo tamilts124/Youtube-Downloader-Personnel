@@ -134,7 +134,9 @@ function AppContent() {
     
     try {
       const data = await api.fetchVideoInfo(url)
-      if (data.error) {
+      if (data.error === "bot_detection") {
+        showNotification("YouTube wants you to sign in. Click the settings icon ⚙️ to upload your cookies file!", "error")
+      } else if (data.error) {
         showNotification("Oops! We couldn't find that video. Please check the link.", "error")
       } else {
         setVideoInfo(data)

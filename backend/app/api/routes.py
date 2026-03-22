@@ -14,6 +14,30 @@ class TaskRequest(BaseModel):
 
 router = APIRouter()
 
+# Global cookie path logic - check both root and backend/
+def get_best_cookies_path():
+    # Attempt 1: backend/cookies.txt
+    p1 = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "cookies.txt"))
+    # Attempt 2: cookies.txt (project root)
+    p2 = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "cookies.txt"))
+    
+    if os.path.exists(p1): path = p1
+    elif os.path.exists(p2): path = p2
+    else: return p1 # Default
+    
+    # User Friendly check: Is this actually a Netscape cookie file?
+    try:
+        with open(path, 'r', errors='ignore') as f:
+            first_line = f.readline()
+            if "# Netscape HTTP Cookie File" not in first_line:
+                print(f"WARNING: {path} does not look like a Netscape cookie file. This might cause YouTube errors!")
+    except:
+        pass
+        
+    return path
+
+COOKIES_PATH = get_best_cookies_path()
+
 def cleanup_download(task_id: str, dl_manager):
     """Background task to delete file after download."""
     import time
@@ -54,13 +78,16 @@ async def get_video_info(video_req: VideoRequest):
         'quiet': True,
         'no_warnings': True,
         'extract_flat': 'in_playlist',
-        'force_ipv4': True
+        'force_ipv4': True,
+        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+        'referer': 'https://www.youtube.com/',
     }
     
-    # Add cookies if present in backend directory
-    cookies_path = os.path.join(os.path.dirname(__file__), "..", "..", "cookies.txt")
-    if os.path.exists(cookies_path):
-        ydl_opts['cookiefile'] = cookies_path
+    # Add cookies if present (checks both backend/ and root/ folders)
+    best_path = get_best_cookies_path()
+    if os.path.exists(best_path):
+        ydl_opts['cookiefile'] = best_path
+        print(f"DEBUG: Using cookies from {best_path}")
 
     try:
         def extract():
@@ -73,9 +100,15 @@ async def get_video_info(video_req: VideoRequest):
             video_data = info['entries'][0]
             if 'formats' not in video_data:
                 def extract_video_details():
-                    inner_opts = {'quiet': True, 'no_warnings': True, 'force_ipv4': True}
-                    if os.path.exists(cookies_path):
-                        inner_opts['cookiefile'] = cookies_path
+                    inner_opts = {
+                        'quiet': True, 
+                        'no_warnings': True, 
+                        'force_ipv4': True,
+                        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+                        'referer': 'https://www.youtube.com/',
+                    }
+                    if os.path.exists(best_path):
+                        inner_opts['cookiefile'] = best_path
                     with yt_dlp.YoutubeDL(inner_opts) as ydl:
                         return ydl.extract_info(video_data['url'] if 'url' in video_data else video_data['id'], download=False)
                 video_data = await run_sync(extract_video_details)
@@ -126,7 +159,14 @@ async def get_video_info(video_req: VideoRequest):
             "quality_options": quality_options
         }
     except Exception as e:
-        return {"error": str(e)}
+        error_msg = str(e)
+        has_cookies = os.path.exists(COOKIES_PATH)
+        if "confirm you're not a bot" in error_msg.lower() or "sign in to confirm" in error_msg.lower():
+            if has_cookies:
+                print(f"CRITICAL: Bot detection FAILED even with cookies at {COOKIES_PATH}. This might be an IP-level block.")
+                return {"error": "bot_detection", "message": "YouTube is blocking this server's IP directly. Usually a fresh cookie file fixes this, but your IP might be temporarily flagged."}
+            return {"error": "bot_detection", "message": "YouTube detected bot activity. Please upload cookies in Settings."}
+        return {"error": error_msg}
 
 @router.post("/download")
 async def start_download(req: DownloadRequest, request: Request):
@@ -242,8 +282,7 @@ async def set_concurrency(con_req: ConcurrencyRequest, request: Request):
         return {"status": "updated", "limit": dl_manager.max_concurrent}
     return {"status": "error"}
 
-# --- YouTube Cookie Management ---
-COOKIES_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "cookies.txt"))
+# Cookie path was moved to the top of the file
 
 @router.get("/settings/cookies")
 async def get_cookie_status():
