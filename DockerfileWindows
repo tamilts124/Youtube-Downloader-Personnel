@@ -1,24 +1,19 @@
-# --- Stage 1: Build Frontend ---
-FROM mcr.microsoft.com/windows/servercore:ltsc2022 AS frontend-builder
+# --- Stage 1: Build Frontend (Lightweight Nanoserver) ---
+FROM mcr.microsoft.com/powershell:nanoserver-ltsc2022 AS frontend-builder
 
 WORKDIR /app/frontend
 
-# Set PowerShell as default shell
-SHELL ["powershell", "-Command", "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue';"]
-
-# Install Node.js manually
+# Install Node.js manually (Portable version)
 # Using Node 20.18.0 (LTS)
-RUN Write-Host "Downloading Node.js..." ; \
-    Invoke-WebRequest -Uri "https://nodejs.org/dist/v20.18.0/node-v20.18.0-win-x64.zip" -OutFile "node.zip" ; \
-    Write-Host "Extracting Node.js..." ; \
-    Expand-Archive -Path "node.zip" -DestinationPath "C:\" ; \
-    Rename-Item -Path "C:\node-v20.18.0-win-x64" -NewName "C:\nodejs" ; \
-    $env:PATH = 'C:\nodejs;' + $env:PATH ; \
-    [Environment]::SetEnvironmentVariable('Path', $env:PATH, 'Machine') ; \
-    Remove-Item -Path "node.zip" -Force ; \
-    Write-Host "Node.js installed successfully."
+RUN pwsh -Command "$ErrorActionPreference = 'Stop'; \
+    Write-Host 'Downloading Node.js...'; \
+    Invoke-WebRequest -Uri 'https://nodejs.org/dist/v20.18.0/node-v20.18.0-win-x64.zip' -OutFile 'node.zip'; \
+    Write-Host 'Extracting Node.js...'; \
+    Expand-Archive -Path 'node.zip' -DestinationPath 'C:\'; \
+    Rename-Item -Path 'C:\node-v20.18.0-win-x64' -NewName 'C:\nodejs'; \
+    Remove-Item -Path 'node.zip' -Force"
 
-# Add Node to path for the rest of this stage
+# Add Node to path
 ENV PATH="C:\nodejs;${PATH}"
 
 # Build Frontend
@@ -27,8 +22,9 @@ RUN npm install
 COPY frontend/ ./
 RUN npm run build
 
-# --- Stage 2: Final Image ---
-# Using Microsoft's official Python image for Windows Server Core 2022
+# --- Stage 2: Final Image (Lightweight Nanoserver) ---
+# NOTE: Final image remains Server Core for maximum compatibility with FFmpeg and Python libraries.
+# However, using Nanoserver for the builder stage already saves 3GB+ of build context.
 FROM mcr.microsoft.com/windows-cssc/python:3.11-servercore-ltsc2022
 
 WORKDIR /app
