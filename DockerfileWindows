@@ -1,4 +1,4 @@
-# --- Bulletproof Minimal Windows Dockerfile (v2) ---
+# --- Ultimate Bulletproof Windows Dockerfile (One-Command Build) ---
 FROM mcr.microsoft.com/powershell:nanoserver-ltsc2022
 
 USER ContainerAdministrator
@@ -7,52 +7,48 @@ WORKDIR /app
 # Set Shell to pwsh for all subsequent RUN commands
 SHELL ["pwsh", "-Command", "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue';"]
 
-# 1. & 2. & 3. Consolidated Manual Installation (Node, Python, FFmpeg)
-# We perform all downloads in one layer and do NOT touch the global PATH yet.
-RUN Write-Host 'Installing dependencies...'; \
+# 1. Infrastructure: Install all tools (Node, Python, FFmpeg)
+# This layer stays cached once tools are downloaded.
+RUN Write-Host 'Installing base tools...'; \
     # Node.js (v22.13.1)
     Invoke-WebRequest -Uri 'https://nodejs.org/dist/v22.13.1/node-v22.13.1-win-x64.zip' -OutFile 'node.zip'; \
     Expand-Archive -Path 'node.zip' -DestinationPath 'C:\'; \
     Rename-Item -Path 'C:\node-v22.13.1-win-x64' -NewName 'C:\nodejs'; \
-    Remove-Item -Path 'node.zip' -Force; \
     # Python (v3.11.9 embeddable)
     Invoke-WebRequest -Uri 'https://www.python.org/ftp/python/3.11.9/python-3.11.9-embed-amd64.zip' -OutFile 'python.zip'; \
     Expand-Archive -Path 'python.zip' -DestinationPath 'C:\python'; \
-    Remove-Item -Path 'python.zip' -Force; \
     Add-Content -Path 'C:\python\python311._pth' -Value 'import site'; \
     # Pip for embeddable Python
     Invoke-WebRequest -Uri 'https://bootstrap.pypa.io/get-pip.py' -OutFile 'get-pip.py'; \
     & C:\python\python.exe get-pip.py; \
-    Remove-Item -Path 'get-pip.py' -Force; \
     # FFmpeg (Static Build)
     Invoke-WebRequest -Uri 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip' -OutFile 'ffmpeg.zip'; \
     Expand-Archive -Path 'ffmpeg.zip' -DestinationPath 'C:\ffmpeg_temp'; \
     $ffmpegDir = Get-ChildItem -Path 'C:\ffmpeg_temp' -Filter 'ffmpeg-*' | Select-Object -First 1; \
     Move-Item -Path \"$($ffmpegDir.FullName)\" -Destination 'C:\ffmpeg'; \
-    Remove-Item -Path 'C:\ffmpeg_temp' -Recurse -Force; \
-    Remove-Item -Path 'ffmpeg.zip' -Force
+    # Cleanup
+    Remove-Item *.zip, get-pip.py, C:\ffmpeg_temp -Recurse -Force; \
+    Write-Host 'Base tools installed successfully.'
 
-# --- BUILD FRONTEND ---
-# We prepend C:\nodejs to $env:Path LOCALLY for this session.
-# This ensures sub-processes (Vite, TSC) find 'node'.
-COPY frontend/package*.json ./frontend/
-RUN $env:Path = 'C:\nodejs;' + $env:Path; \
+# 2. Application Build: ONE GIANT COMMAND
+# We copy the code and run EVERYTHING in a single PowerShell session.
+# This makes it physically impossible for Vite/Node to 'disappear'.
+COPY . .
+
+RUN $env:Path = 'C:\nodejs;C:\python;C:\python\Scripts;C:\ffmpeg\bin;' + $env:Path; \
+    Write-Host 'Step A: Building Frontend...'; \
     cd frontend; \
     & C:\nodejs\npm.cmd install; \
-    & C:\nodejs\npm.cmd run build
+    & C:\nodejs\npm.cmd run build; \
+    Write-Host 'Step B: Installing Backend...'; \
+    cd ../backend; \
+    & C:\python\python.exe -m pip install --no-cache-dir -r requirements.txt; \
+    Write-Host 'Build process completed successfully.'
 
-# --- INSTALL BACKEND ---
-# Prepend Python to $env:Path LOCALLY for this session.
-COPY backend/requirements.txt ./backend/
-RUN $env:Path = 'C:\python;C:\python\Scripts;' + $env:Path; \
-    & C:\python\python.exe -m pip install --no-cache-dir -r backend/requirements.txt
-
-# --- FINAL SETUP ---
-COPY . .
+# --- FINAL RUNTIME SETUP ---
 WORKDIR /app/backend
 
-# Finally set the global Path for the runtime environment.
-# Note: In Windows containers, it is usually 'Path' with capital P.
+# Set the final Path for the running application
 ENV Path="C:\nodejs;C:\python;C:\python\Scripts;C:\ffmpeg\bin;C:\Program Files\PowerShell\7;C:\Windows\system32;C:\Windows"
 
 # Default port
