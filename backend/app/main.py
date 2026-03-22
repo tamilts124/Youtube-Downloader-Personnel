@@ -9,6 +9,7 @@ import uvicorn
 
 from app.core.manager import DownloadManager
 from app.api.routes import router
+from app.services.proxy_manager import ProxyManager
 
 class ConnectionManager:
     def __init__(self):
@@ -36,13 +37,30 @@ class ConnectionManager:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Initialize data directory (at root, outside backend to avoid uvicorn reloads)
+    # Initialize data directory (inside backend, but excluded from uvicorn reload)
+    root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    data_dir = os.path.join(root_dir, "data")
+    if not os.path.exists(data_dir):
+        os.makedirs(data_dir)
+
+    cookies_path = os.path.join(data_dir, "cookies.txt")
+    app.state.cookies_path = cookies_path
+
     # Initialize managers and store in app state
     connection_manager = ConnectionManager()
-    dl_manager = DownloadManager(connection_manager.broadcast, max_concurrent=2)
+    dl_manager = DownloadManager(connection_manager.broadcast, max_concurrent=2, data_dir=data_dir)
     dl_manager.set_loop(asyncio.get_running_loop())
     
     app.state.connection_manager = connection_manager
     app.state.dl_manager = dl_manager
+    
+    # Initialize Proxy Manager
+    proxy_manager = ProxyManager(data_dir)
+    app.state.proxy_manager = proxy_manager
+    
+    # Link proxy manager to download manager
+    dl_manager.set_proxy_manager(proxy_manager)
 
     yield
 
@@ -52,13 +70,50 @@ app = FastAPI(title="YouTube Downloader API", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# Optional: Disable same-origin check for WebSockets if needed
+# (FastAPI/Starlette handles this via CORSMiddleware usually, but we'll be safe)
+
 # API Routes
 app.include_router(router, prefix="/api")
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    # This matches the frontend expectation at root /ws
+    try:
+        origin = websocket.headers.get("origin")
+        host = websocket.headers.get("host")
+        print(f"DEBUG WS: Handshake Attempt - Origin: {origin}, Host: {host}")
+        
+        await websocket.accept()
+        manager = websocket.app.state.connection_manager
+        dl_manager = websocket.app.state.dl_manager
+        manager.active_connections.append(websocket)
+        
+        # Initial sync: push current state immediately
+        if dl_manager:
+            await dl_manager._notify_update_async()
+        
+        print(f"DEBUG WS: Client connected from {origin}")
+        
+        while True:
+            # Keep alive and handle anything from client (ping/pong)
+            data = await websocket.receive_text()
+            if data == "ping":
+                await websocket.send_text("pong")
+                
+    except Exception as e:
+        print(f"DEBUG WS: Socket Error: {e}")
+    finally:
+        try:
+            manager = websocket.app.state.connection_manager
+            manager.active_connections.remove(websocket)
+        except:
+            pass
+        print("DEBUG WS: Client disconnected")
 
 @app.get("/ping")
 async def ping():

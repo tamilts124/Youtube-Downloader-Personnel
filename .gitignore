@@ -4,6 +4,7 @@ Thumbs.db
 *.swp
 *.bak
 *.tmp
+Tools/
 
 # IDEs and Editors
 .vscode/
@@ -44,6 +45,7 @@ env/
 # Project Specific - Backend
 backend/cookies.txt
 backend/temp/
+backend/data/
 backend/.env
 backend/*.log
 

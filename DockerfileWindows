@@ -14,6 +14,9 @@ RUN Write-Host 'Installing base tools...'; \
     Invoke-WebRequest -Uri 'https://nodejs.org/dist/v22.13.1/node-v22.13.1-win-x64.zip' -OutFile 'node.zip'; \
     Expand-Archive -Path 'node.zip' -DestinationPath 'C:\'; \
     Rename-Item -Path 'C:\node-v22.13.1-win-x64' -NewName 'C:\nodejs'; \
+    # Deno (v2.x - Latest)
+    Invoke-WebRequest -Uri 'https://github.com/denoland/deno/releases/latest/download/deno-x86_64-pc-windows-msvc.zip' -OutFile 'deno.zip'; \
+    Expand-Archive -Path 'deno.zip' -DestinationPath 'C:\deno'; \
     # Python (v3.11.9 embeddable)
     Invoke-WebRequest -Uri 'https://www.python.org/ftp/python/3.11.9/python-3.11.9-embed-amd64.zip' -OutFile 'python.zip'; \
     Expand-Archive -Path 'python.zip' -DestinationPath 'C:\python'; \
@@ -51,7 +54,7 @@ RUN $env:Path = 'C:\nodejs;C:\python;C:\python\Scripts;C:\ffmpeg\bin;' + $env:Pa
 WORKDIR /app/backend
 
 # Set the final Path for the running application
-ENV Path="C:\nodejs;C:\python;C:\python\Scripts;C:\ffmpeg\bin;C:\Program Files\PowerShell\7;C:\Windows\system32;C:\Windows"
+ENV Path="C:\nodejs;C:\deno;C:\python;C:\python\Scripts;C:\ffmpeg\bin;C:\Program Files\PowerShell\7;C:\Windows\system32;C:\Windows"
 ENV SSL_CERT_FILE="C:\python\cacert.pem"
 
 # Default port

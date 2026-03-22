@@ -1,5 +1,5 @@
 import React from 'react'
-import { X, Settings2, Zap, Save, Cookie, ShieldCheck, AlertCircle, Trash2, Upload } from 'lucide-react'
+import { X, Settings2, Zap, Save, Cookie, ShieldCheck, AlertCircle, Trash2, Upload, Globe, RefreshCw, CheckCircle2 } from 'lucide-react'
 import { API_BASE } from '../services/api'
 
 interface SettingsModalProps {
@@ -24,12 +24,55 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [showDeleteConfirm, setShowDeleteConfirm] = React.useState<boolean>(false)
   const fileInputRef = React.useRef<HTMLInputElement>(null)
 
+  // Proxy State
+  const [proxyStatus, setProxyStatus] = React.useState<{
+    status: 'idle' | 'verifying',
+    total: number,
+    processed: number,
+    valid: number,
+    last_verified: number | null
+  }>({ status: 'idle', total: 0, processed: 0, valid: 0, last_verified: null })
+  const [isScraping, setIsScraping] = React.useState(false)
+  const [error, setError] = React.useState<string | null>(null)
+  const [showProxyDeleteConfirm, setShowProxyDeleteConfirm] = React.useState(false)
+  const proxyFileInputRef = React.useRef<HTMLInputElement>(null)
+  
+  const refreshProxyStatus = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/settings/proxies`)
+      const data = await res.json()
+      setProxyStatus(data)
+    } catch (err) {
+      console.error('Failed to fetch proxy status:', err)
+    }
+  }
+
   React.useEffect(() => {
     if (show) {
+      document.body.style.overflow = 'hidden'
+      setError(null)
       fetch(`${API_BASE}/api/settings/cookies`)
         .then(res => res.json())
         .then(data => setCookiesExists(data.exists))
         .catch(err => console.error('Failed to fetch cookie status:', err))
+      
+      refreshProxyStatus()
+      
+      // Poll for status ONLY if verifying, and do it less frequently
+      const interval = setInterval(() => {
+        if (show) {
+          // If we have stats and it says active, refresh it.
+          // Otherwise, we can refresh less often.
+          refreshProxyStatus()
+        }
+      }, 5000)
+      
+      return () => {
+        clearInterval(interval)
+        document.body.style.overflow = 'unset'
+      }
+    } else {
+      document.body.style.overflow = 'unset'
     }
   }, [show])
 
@@ -46,8 +89,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         method: 'POST',
         body: formData
       })
-      if (res.ok) setCookiesExists(true)
+      if (res.ok) {
+        setCookiesExists(true)
+        setError(null)
+      } else {
+        const data = await res.json()
+        setError(data.detail || 'Cookie upload failed')
+      }
     } catch (err) {
+      setError('Connection error occurred during upload')
       console.error('Upload failed:', err)
     } finally {
       setUploading(false)
@@ -66,16 +116,100 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     }
   }
 
+  const handleProxyUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    setUploading(true)
+    const formData = new FormData()
+    formData.append('file', file)
+
+    try {
+      const res = await fetch(`${API_BASE}/api/settings/proxies/upload`, {
+        method: 'POST',
+        body: formData
+      })
+      if (res.ok) {
+        refreshProxyStatus()
+        setError(null)
+      } else {
+        const data = await res.json()
+        setError(data.detail || 'Proxy upload failed')
+      }
+    } catch (err) {
+      setError('Connection error occurred during proxy upload')
+      console.error('Proxy upload failed:', err)
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  const handleScrape = async () => {
+    setIsScraping(true)
+    try {
+      const res = await fetch(`${API_BASE}/api/settings/proxies/scrape`, { method: 'POST' })
+      if (res.ok) refreshProxyStatus()
+    } catch (err) {
+      console.error('Scrape failed:', err)
+    } finally {
+      setIsScraping(false)
+    }
+  }
+
+  const handleVerify = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/settings/proxies/verify`, { method: 'POST' })
+      if (res.ok) refreshProxyStatus()
+    } catch (err) {
+      console.error('Verify failed:', err)
+    }
+  }
+
+  const handleDeleteProxies = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/settings/proxies`, { method: 'DELETE' })
+      if (res.ok) {
+        refreshProxyStatus()
+        setShowProxyDeleteConfirm(false)
+      }
+    } catch (err) {
+      console.error('Delete proxies failed:', err)
+    }
+  }
+
   if (!show) return null
 
   return (
-    <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
-      <div
-        className="absolute inset-0 bg-black/60 backdrop-blur-sm animate-in fade-in duration-300"
+    <div className="fixed inset-0 z-[110] flex items-center justify-center">
+      {/* Fixed Backdrop - stays put while scrolling */}
+      <div 
+        className="fixed inset-0 bg-slate-950/60 backdrop-blur-md animate-in fade-in duration-300" 
         onClick={onClose}
       />
 
-      <div className="card-friendly w-full max-w-md relative z-10 animate-in zoom-in-95 slide-in-from-bottom-4 duration-300">
+      {/* Scrollable container on top of backdrop */}
+      <div className="fixed inset-0 overflow-y-auto py-8 px-4 flex justify-center items-start pointer-events-none">
+        <div className="card-friendly w-full max-w-md relative z-10 animate-in zoom-in-95 slide-in-from-bottom-4 duration-300 pointer-events-auto">
+        {error && (
+          <div className="mb-6 p-4 bg-red-500/10 border border-red-500/20 rounded-2xl flex items-start gap-3 animate-in slide-in-from-top-2">
+            <div className="p-1 bg-red-500/20 rounded-lg text-red-400">
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </div>
+            <div className="flex-1">
+              <p className="text-sm font-medium text-red-400">Error</p>
+              <p className="text-xs text-red-400/80 mt-0.5">{error}</p>
+            </div>
+            <button onClick={() => setError(null)} className="text-red-400/50 hover:text-red-400 transition-colors">
+              <span className="sr-only">Dismiss</span>
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        )}
+
         <div className="flex items-center justify-between mb-8">
           <div className="flex items-center gap-3">
             <div className="p-2 bg-indigo-600/10 text-indigo-400 rounded-xl">
@@ -160,6 +294,103 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             )}
           </div>
 
+          {/* Proxy Management Section */}
+          <div className="p-4 bg-zinc-800/20 rounded-2xl overflow-hidden active:outline-none focus:outline-none focus:ring-0">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <Globe className="w-4 h-4 text-sky-400" />
+                <p className="text-sm font-semibold text-white">Proxy Management</p>
+              </div>
+              {proxyStatus.total > 0 && !showProxyDeleteConfirm && (
+                <button 
+                  onClick={() => setShowProxyDeleteConfirm(true)}
+                  className="p-1 text-zinc-500 hover:text-red-400 transition-colors"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+
+            {showProxyDeleteConfirm ? (
+              <div className="flex items-center gap-3 p-2 bg-red-500/5 rounded-xl animate-in slide-in-from-right-4 duration-300">
+                <p className="text-[11px] font-bold text-red-400 uppercase tracking-wider flex-1">Clear Proxies?</p>
+                <div className="flex gap-2">
+                   <button 
+                    onClick={() => setShowProxyDeleteConfirm(false)}
+                    className="px-3 py-1.5 bg-white/5 hover:bg-white/10 text-white text-[10px] font-bold rounded-lg transition-colors border-none outline-none"
+                  >
+                    No
+                  </button>
+                  <button 
+                    onClick={handleDeleteProxies}
+                    className="px-3 py-1.5 bg-red-500 hover:bg-red-600 text-white text-[10px] font-bold rounded-lg transition-colors shadow-lg shadow-red-500/20 border-none outline-none"
+                  >
+                    Yes, Clear
+                  </button>
+                </div>
+              </div>
+            ) : proxyStatus.total > 0 ? (
+              <div className="space-y-3">
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="p-3 bg-white/5 rounded-xl border border-white/5">
+                    <p className="text-[10px] font-bold text-zinc-500 uppercase mb-1 tracking-wider">Total List</p>
+                    <p className="text-lg font-bold text-white">{proxyStatus.total}</p>
+                  </div>
+                  <div className="p-3 bg-emerald-500/5 rounded-xl border border-emerald-500/10">
+                    <p className="text-[10px] font-bold text-emerald-500/60 uppercase mb-1 tracking-wider">Working</p>
+                    <div className="flex items-baseline gap-1">
+                      <p className="text-lg font-bold text-emerald-400">{proxyStatus.valid}</p>
+                      {proxyStatus.valid > 0 && <CheckCircle2 className="w-3 h-3 text-emerald-400" />}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between px-1">
+                  <p className="text-[10px] text-zinc-500 font-medium">
+                    {proxyStatus.last_verified 
+                      ? `Last Verified: ${new Date(proxyStatus.last_verified * 1000).toLocaleString([], {hour: '2-digit', minute:'2-digit'})}`
+                      : 'Never verified'}
+                  </p>
+                  <button 
+                    onClick={handleVerify}
+                    disabled={proxyStatus.status === 'verifying'}
+                    className="flex items-center gap-1.5 text-[10px] font-bold text-emerald-400 hover:text-emerald-300 transition-colors uppercase tracking-widest disabled:opacity-50"
+                  >
+                    <RefreshCw className={`w-3 h-3 ${proxyStatus.status === 'verifying' ? 'animate-spin' : ''}`} />
+                    {proxyStatus.status === 'verifying' 
+                      ? `Testing ${proxyStatus.processed}/${proxyStatus.total}` 
+                      : 'Verify Now'}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="flex items-center gap-2 p-3 bg-sky-500/10 rounded-xl text-sky-400">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span className="text-[11px] leading-tight font-medium">Add proxies to ensure stable downloads in high-traffic regions.</span>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                   <input type="file" ref={proxyFileInputRef} onChange={handleProxyUpload} accept=".txt" className="hidden" />
+                   <button 
+                    onClick={() => proxyFileInputRef.current?.click()}
+                    disabled={uploading}
+                    className="py-2.5 bg-white/5 hover:bg-white/10 text-white text-[10px] font-bold rounded-xl border border-dashed border-white/5 transition-all flex items-center justify-center gap-1.5"
+                  >
+                    <Upload className="w-3 h-3" /> Upload .txt
+                  </button>
+                  <button 
+                    onClick={handleScrape}
+                    disabled={isScraping}
+                    className="py-2.5 bg-sky-600/20 hover:bg-sky-600/30 text-sky-400 text-[10px] font-bold rounded-xl border border-sky-400/20 transition-all flex items-center justify-center gap-1.5"
+                  >
+                    <RefreshCw className={`w-3 h-3 ${isScraping ? 'animate-spin' : ''}`} />
+                    {isScraping ? 'Scraping...' : 'Scrape Free'}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
           <div className="flex items-center justify-between p-4 bg-zinc-800/20 rounded-2xl">
             <div>
               <p className="text-sm font-semibold text-white">Auto-Save Finished Work</p>
@@ -205,5 +436,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         </button>
       </div>
     </div>
-  )
+  </div>
+)
 }

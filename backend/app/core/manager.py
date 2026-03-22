@@ -5,6 +5,7 @@ import yt_dlp
 import os
 import shutil
 import zipfile
+import sqlite3
 from datetime import datetime
 from typing import Dict, Any, List
 
@@ -25,10 +26,21 @@ class DownloadTask:
         self._stop_event = threading.Event()
         self.speed_history = [] # To average jittery speeds
         self.last_broadcast_time = 0 # To throttle updates
+        self.created_at = datetime.now().isoformat()
+
+    @classmethod
+    def from_db_row(cls, row):
+        task = cls(row['url'], row['format_id'], row['title'], row['thumbnail'], row['save_path'], row['quality_target'])
+        task.id = row['id']
+        task.status = row['status']
+        task.progress = row['progress']
+        task.error_msg = row['error_msg']
+        task.created_at = row['created_at']
+        return task
 
 
 class DownloadManager:
-    def __init__(self, broadcast_callback, max_concurrent=2):
+    def __init__(self, broadcast_callback, max_concurrent=2, data_dir=None):
         self.tasks: Dict[str, DownloadTask] = {}
         self.queue: List[str] = [] # List of task IDs in queue order
         self.max_concurrent = max_concurrent
@@ -38,26 +50,95 @@ class DownloadManager:
         except RuntimeError:
             self.loop = None
         
-        # Use environment variable or default to project root 'temp'
-        self.temp_save_path = os.environ.get("TEMP_DIR")
-        if not self.temp_save_path:
-             # Default: ../../../temp from backend/app/core/manager.py
-             self.temp_save_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "temp"))
+        self.proxy_manager = None
         
+        # Centralized Path Management
+        if data_dir:
+            self.data_dir = data_dir
+            self.db_path = os.path.join(data_dir, "downloads.db")
+            self.cookies_path = os.path.join(data_dir, "cookies.txt")
+            # Place temp parallel to data inside backend/
+            self.temp_save_path = os.path.join(os.path.dirname(data_dir), "temp")
+        else:
+            # Fallback legacy paths
+            self.data_dir = os.path.dirname(os.path.abspath(__file__))
+            self.db_path = os.path.join(self.data_dir, "downloads.db")
+            self.cookies_path = os.path.join(self.data_dir, "cookies.txt")
+            self.temp_save_path = os.path.join(self.data_dir, "temp")
+            
         if not os.path.exists(self.temp_save_path):
             os.makedirs(self.temp_save_path)
 
         self.lock = threading.RLock()
         self.auto_save = False
+        self._init_db()
+        self._load_tasks_from_db()
 
     def set_loop(self, loop):
         self.loop = loop
+
+    def set_proxy_manager(self, proxy_manager):
+        self.proxy_manager = proxy_manager
+
+    def _get_db_conn(self):
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    def _init_db(self):
+        with self._get_db_conn() as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS tasks (
+                    id TEXT PRIMARY KEY,
+                    url TEXT,
+                    format_id TEXT,
+                    title TEXT,
+                    thumbnail TEXT,
+                    save_path TEXT,
+                    status TEXT,
+                    progress REAL,
+                    error_msg TEXT,
+                    quality_target TEXT,
+                    created_at TEXT
+                )
+            """)
+            conn.commit()
+
+    def _load_tasks_from_db(self):
+        with self._get_db_conn() as conn:
+            rows = conn.execute("SELECT * FROM tasks ORDER BY created_at ASC").fetchall()
+            for row in rows:
+                task = DownloadTask.from_db_row(row)
+                # Force all non-finished tasks to paused on startup for user control
+                if task.status in ["downloading", "queued"]:
+                    task.status = "paused"
+                
+                # Force new path to avoid re-creating root folders from legacy DB entries
+                task.save_path = self.temp_save_path
+                
+                self.tasks[task.id] = task
+                self.queue.append(task.id)
+        print(f"DEBUG: Loaded {len(self.tasks)} tasks from SQLite")
+
+    def _save_task_to_db(self, task: DownloadTask):
+        with self._get_db_conn() as conn:
+            conn.execute("""
+                INSERT OR REPLACE INTO tasks (
+                    id, url, format_id, title, thumbnail, save_path, 
+                    status, progress, error_msg, quality_target, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                task.id, task.url, task.format_id, task.title, task.thumbnail, task.save_path,
+                task.status, task.progress, task.error_msg, task.quality_target, task.created_at
+            ))
+            conn.commit()
 
     def add_task(self, url: str, format_id: str, title: str, thumbnail: str, quality_target: str = None) -> DownloadTask:
         task = DownloadTask(url, format_id, title, thumbnail, self.temp_save_path, quality_target)
         with self.lock:
             self.tasks[task.id] = task
             self.queue.append(task.id)
+            self._save_task_to_db(task)
         self._notify_update()
         self._trigger_process()
         return task
@@ -105,14 +186,17 @@ class DownloadManager:
             'referer': 'https://www.youtube.com/',
         }
         
-        # Add cookies if present (check backend/ and root/)
-        p1 = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "cookies.txt"))
-        p2 = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "cookies.txt"))
-        cookies_path = p1 if os.path.exists(p1) else (p2 if os.path.exists(p2) else None)
-        
-        if cookies_path:
-            ydl_opts['cookiefile'] = cookies_path
-            print(f"DEBUG: Playlist worker using cookies from: {cookies_path}")
+        # Add cookies if present
+        if os.path.exists(self.cookies_path):
+            ydl_opts['cookiefile'] = self.cookies_path
+            print(f"DEBUG: Playlist worker using cookies from: {self.cookies_path}")
+
+        # Add proxy if available
+        if self.proxy_manager:
+            status = self.proxy_manager.get_status()
+            if status.get("working_proxies"):
+                ydl_opts['proxy'] = status["working_proxies"][0]
+                print(f"DEBUG: Playlist worker using proxy: {ydl_opts['proxy']}")
         try:
             print(f"Expanding playlist: {url}")
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -124,12 +208,12 @@ class DownloadManager:
                         asyncio.run_coroutine_threadsafe(self.broadcast({
                             "type": "notification",
                             "level": "success",
-                            "message": f"Found {count} videos in playlist!"
+                            "message": f"Found {count} items in playlist!"
                         }), self.loop)
 
                     for entry in entries:
                          if not entry: continue
-                         title = entry.get('title') or entry.get('id') or 'Untitled Video'
+                         title = entry.get('title') or entry.get('id') or 'Untitled Item'
                          vid_id = entry.get('url') or entry.get('id')
                          if not vid_id: continue
                          
@@ -145,7 +229,7 @@ class DownloadManager:
                          self.add_task(video_url, format_id, title, thumb, quality_target)
 
                 else:
-                    raise Exception("No videos found in this playlist.")
+                    raise Exception("No content found in this playlist.")
 
         except Exception as e:
             print(f"Playlist expansion error for {url}: {e}")
@@ -168,6 +252,7 @@ class DownloadManager:
                 if task.status in ["downloading", "queued"]:
                     task.status = "paused"
                     task._stop_event.set()
+                    self._save_task_to_db(task)
         self._notify_update()
         self._trigger_process()
 
@@ -178,19 +263,10 @@ class DownloadManager:
                 if task and task.status in ["downloading", "queued"]:
                     task.status = "paused"
                     task._stop_event.set()
+                    self._save_task_to_db(task)
         self._notify_update()
         self._trigger_process()
 
-    def cancel_all(self):
-        with self.lock:
-            for tid in list(self.queue):
-                task = self.tasks.get(tid)
-                if task and task.status == "downloading":
-                    task._stop_event.set()
-            self.tasks = {}
-            self.queue = []
-        self._notify_update()
-        self._trigger_process()
 
     def set_auto_save(self, state: bool):
         self.auto_save = state
@@ -203,6 +279,7 @@ class DownloadManager:
                 if task.status in ["paused", "error"]:
                     task.status = "queued"
                     task._stop_event.clear()
+                    self._save_task_to_db(task)
                     print(f"Resuming task {task_id}")
                 else:
                     print(f"Cannot resume task {task_id} in status {task.status}")
@@ -220,6 +297,7 @@ class DownloadManager:
                 task.progress = 0
                 task.error_msg = ""
                 task._stop_event.clear()
+                self._save_task_to_db(task)
                 print(f"Resubmitting task {task_id}")
         self._notify_update()
         self._trigger_process()
@@ -245,6 +323,7 @@ class DownloadManager:
                 if task and (task.status == "paused" or task.status == "error"):
                     task.status = "queued"
                     task._stop_event.clear()
+                    self._save_task_to_db(task)
         self._notify_update()
         self._trigger_process()
 
@@ -371,14 +450,17 @@ class DownloadManager:
             'referer': 'https://www.youtube.com/',
         }
         
-        # Add cookies if present (check backend/ and root/)
-        p1 = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "cookies.txt"))
-        p2 = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "cookies.txt"))
-        cookies_path = p1 if os.path.exists(p1) else (p2 if os.path.exists(p2) else None)
-        
-        if cookies_path:
-            ydl_opts['cookiefile'] = cookies_path
-            print(f"DEBUG: Download worker using cookies from: {cookies_path}")
+        # Add cookies if present
+        if os.path.exists(self.cookies_path):
+            ydl_opts['cookiefile'] = self.cookies_path
+            print(f"DEBUG: Download worker using cookies from: {self.cookies_path}")
+
+        # Add proxy if available
+        if self.proxy_manager:
+            status = self.proxy_manager.get_status()
+            if status.get("working_proxies"):
+                ydl_opts['proxy'] = status["working_proxies"][0]
+                print(f"DEBUG: Download worker using proxy: {ydl_opts['proxy']}")
 
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -386,6 +468,7 @@ class DownloadManager:
             
             if not task._stop_event.is_set():
                 task.status = "completed"
+                self._save_task_to_db(task)
         except Exception as e:
             if task._stop_event.is_set():
                 # Task explicitly stopped or paused
@@ -394,6 +477,7 @@ class DownloadManager:
                 print(f"Download Error for {task.id}: {e}")
                 task.status = "error"
                 task.error_msg = str(e)
+                self._save_task_to_db(task)
         finally:
             if not task._stop_event.is_set() and task.status == "completed" and self.auto_save:
                 print(f"Auto-saving task {task.id}")
@@ -476,6 +560,7 @@ class DownloadManager:
             task = self.tasks[task_id]
             # We don't remove from queue yet, just mark it so the UI can show 'Downloaded'
             task.status = "downloaded"
+            self._save_task_to_db(task)
             
             self.notify(f"Download started for {task.title}! Use the trash icon to clear it from server later.", "success")
             self._notify_update()
@@ -509,6 +594,12 @@ class DownloadManager:
                             print(f"File delete failed for {file} (might be locked): {e}")
             except Exception as e:
                 print(f"Dir list error: {e}")
+            
+            # 2. Delete from database
+            with self._get_db_conn() as conn:
+                conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+                conn.commit()
+
             if task_id in self.queue:
                 self.queue.remove(task_id)
             
@@ -546,6 +637,11 @@ class DownloadManager:
                         print(f"Nuked: {filename}")
                     except Exception as e:
                         print(f"Failed to nuke {filename}: {e}")
+            
+            # 5. Clear database entirely
+            with self._get_db_conn() as conn:
+                conn.execute("DELETE FROM tasks")
+                conn.commit()
                         
         self._notify_update()
         self._trigger_process()

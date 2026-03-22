@@ -90,7 +90,7 @@ function AppContent() {
 
   const downloadTaskFile = async (task: DownloadTask) => {
     try {
-      showNotification(`Downloading ${task.title} to your device...`, "info");
+      showNotification(`Saving ${task.title} for your device...`, "info");
       
       const blob = await api.fetchFileBlob(task.id);
       const url = window.URL.createObjectURL(blob);
@@ -108,7 +108,7 @@ function AppContent() {
       // Tell server to delete
       await api.removeTask(task.id);
     } catch (err) {
-      showNotification("Failed to download file to device.", "error");
+      showNotification("Failed to save to your device.", "error");
       console.error(err);
     }
   };
@@ -135,9 +135,9 @@ function AppContent() {
     try {
       const data = await api.fetchVideoInfo(url)
       if (data.error === "bot_detection") {
-        showNotification("YouTube wants you to sign in. Click the settings icon ⚙️ to upload your cookies file!", "error")
+        showNotification(data.message || "YouTube wants you to sign in. Please check your cookies.", "error")
       } else if (data.error) {
-        showNotification("Oops! We couldn't find that video. Please check the link.", "error")
+        showNotification("Oops! We couldn't find that content. Please check the link.", "error")
       } else {
         setVideoInfo(data)
         if (data.is_playlist) {
@@ -147,7 +147,7 @@ function AppContent() {
         }
       }
     } catch (err) {
-      showNotification("Trouble connecting to the downloader. Is the backend running?", "error")
+      showNotification("Trouble connecting to the service. Please try again.", "error")
     } finally {
       setFetching(false)
     }
@@ -160,15 +160,15 @@ function AppContent() {
         url, 
         format_id: videoInfo.is_playlist ? 'best' : selectedFormat, 
         quality_target: videoInfo.is_playlist ? selectedFormat : null,
-        title: videoInfo.title, 
-        thumbnail: videoInfo.thumbnail,
+        title: videoInfo.title || 'Untitled Video', 
+        thumbnail: videoInfo.thumbnail || '',
         is_playlist: videoInfo.is_playlist 
       })
       setUrl('')
       setVideoInfo(null)
-      showNotification("Starting your download!", "success")
+      showNotification("Starting your request!", "success")
     } catch (err) {
-      showNotification("Failed to start download. Try again?", "error")
+      showNotification("Failed to start. Try again?", "error")
     }
   }
 
@@ -187,7 +187,7 @@ function AppContent() {
     try {
       if (action === 'resubmit') {
         await api.resubmitTask(task_id)
-        showNotification("Restarting download...", "info")
+        showNotification("Restarting...", "info")
         return
       }
       

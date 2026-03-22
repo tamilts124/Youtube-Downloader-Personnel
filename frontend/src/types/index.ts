@@ -9,12 +9,13 @@ export type Format = {
 }
 
 export type VideoInfo = {
-  title: string
-  thumbnail: string
-  duration: number
-  uploader: string
-  formats: Format[]
+  title?: string
+  thumbnail?: string
+  duration?: number
+  uploader?: string
+  formats?: Format[]
   error?: string
+  message?: string
   is_playlist?: boolean
   playlist_count?: number
   quality_options?: { label: string, value: string }[]

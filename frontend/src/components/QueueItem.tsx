@@ -11,7 +11,7 @@ interface QueueItemProps {
 export const QueueItem: React.FC<QueueItemProps> = ({ task, provided, snapshot, onAction }) => {
   const getStatusLabel = (status: TaskStatus) => {
     switch (status) {
-      case 'downloading': return 'Downloading...'
+      case 'downloading': return 'Processing...'
       case 'completed': return 'Ready'
       case 'error': return 'Something went wrong'
       case 'paused': return 'Paused'

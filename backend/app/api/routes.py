@@ -14,29 +14,8 @@ class TaskRequest(BaseModel):
 
 router = APIRouter()
 
-# Global cookie path logic - check both root and backend/
-def get_best_cookies_path():
-    # Attempt 1: backend/cookies.txt
-    p1 = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "cookies.txt"))
-    # Attempt 2: cookies.txt (project root)
-    p2 = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "cookies.txt"))
-    
-    if os.path.exists(p1): path = p1
-    elif os.path.exists(p2): path = p2
-    else: return p1 # Default
-    
-    # User Friendly check: Is this actually a Netscape cookie file?
-    try:
-        with open(path, 'r', errors='ignore') as f:
-            first_line = f.readline()
-            if "# Netscape HTTP Cookie File" not in first_line:
-                print(f"WARNING: {path} does not look like a Netscape cookie file. This might cause YouTube errors!")
-    except:
-        pass
-        
-    return path
-
-COOKIES_PATH = get_best_cookies_path()
+def get_cookies_path(request: Request):
+    return getattr(request.app.state, 'cookies_path', None)
 
 def cleanup_download(task_id: str, dl_manager):
     """Background task to delete file after download."""
@@ -44,36 +23,10 @@ def cleanup_download(task_id: str, dl_manager):
     time.sleep(10) # Small buffer
     dl_manager.delete_task(task_id)
 
-@router.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
-    try:
-        # Accept first!
-        await websocket.accept()
-        
-        state = websocket.app.state
-        manager = state.connection_manager
-        dl_manager = state.dl_manager
-        
-        # Add to manager list
-        manager.active_connections.append(websocket)
-        
-        if dl_manager:
-             await dl_manager._notify_update_async()
-             
-        while True:
-            # Keep alive and wait for client to close
-            data = await websocket.receive_text()
-            if data == "ping":
-                await websocket.send_text("pong")
-    except Exception as e:
-        print(f"WS Error: {e}")
-    finally:
-        state = websocket.app.state
-        manager = state.connection_manager
-        manager.disconnect(websocket)
+# WebSocket endpoint moved to main.py to live at root /ws
 
 @router.post("/info")
-async def get_video_info(video_req: VideoRequest):
+async def get_video_info(video_req: VideoRequest, request: Request):
     ydl_opts = {
         'quiet': True,
         'no_warnings': True,
@@ -83,11 +36,20 @@ async def get_video_info(video_req: VideoRequest):
         'referer': 'https://www.youtube.com/',
     }
     
-    # Add cookies if present (checks both backend/ and root/ folders)
-    best_path = get_best_cookies_path()
-    if os.path.exists(best_path):
-        ydl_opts['cookiefile'] = best_path
-        print(f"DEBUG: Using cookies from {best_path}")
+    # Add cookies if present
+    cookies_path = get_cookies_path(request)
+    if cookies_path and os.path.exists(cookies_path):
+        ydl_opts['cookiefile'] = cookies_path
+        print(f"DEBUG: Using cookies from {cookies_path}")
+
+    # Add proxy if available
+    proxy_manager = getattr(video_req, "proxy_manager", None) or getattr(request.app.state, "proxy_manager", None)
+    if proxy_manager:
+        status = proxy_manager.get_status()
+        if status.get("working_proxies"):
+            # Use the first working proxy for info extraction
+            ydl_opts['proxy'] = status["working_proxies"][0]
+            print(f"DEBUG: Using proxy {ydl_opts['proxy']}")
 
     try:
         def extract():
@@ -107,8 +69,9 @@ async def get_video_info(video_req: VideoRequest):
                         'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
                         'referer': 'https://www.youtube.com/',
                     }
-                    if os.path.exists(best_path):
-                        inner_opts['cookiefile'] = best_path
+                    cookies_path = get_cookies_path(request)
+                    if cookies_path and os.path.exists(cookies_path):
+                        inner_opts['cookiefile'] = cookies_path
                     with yt_dlp.YoutubeDL(inner_opts) as ydl:
                         return ydl.extract_info(video_data['url'] if 'url' in video_data else video_data['id'], download=False)
                 video_data = await run_sync(extract_video_details)
@@ -160,12 +123,26 @@ async def get_video_info(video_req: VideoRequest):
         }
     except Exception as e:
         error_msg = str(e)
-        has_cookies = os.path.exists(COOKIES_PATH)
+        cookies_path = get_cookies_path(request)
+        has_cookies = cookies_path and os.path.exists(cookies_path)
+        
         if "confirm you're not a bot" in error_msg.lower() or "sign in to confirm" in error_msg.lower():
             if has_cookies:
-                print(f"CRITICAL: Bot detection FAILED even with cookies at {COOKIES_PATH}. This might be an IP-level block.")
-                return {"error": "bot_detection", "message": "YouTube is blocking this server's IP directly. Usually a fresh cookie file fixes this, but your IP might be temporarily flagged."}
-            return {"error": "bot_detection", "message": "YouTube detected bot activity. Please upload cookies in Settings."}
+                return {
+                    "error": "bot_detection", 
+                    "message": "YouTube is still blocking this server. Your cookies may be EXPIRED - try a fresh export. If that fails, your server IP might be flagged by YouTube."
+                }
+            return {
+                "error": "bot_detection", 
+                "message": "YouTube is blocking the request (Bot Detection). Please upload a fresh cookies.txt using the Settings icon ⚙️."
+            }
+
+        if "javascript" in error_msg.lower() or "deno" in error_msg.lower():
+            return {
+                "error": "missing_runtime",
+                "message": "Missing JavaScript Runtime (Deno/Node). yt-dlp needs this to extract content info on the server."
+            }
+
         return {"error": error_msg}
 
 @router.post("/download")
@@ -285,8 +262,9 @@ async def set_concurrency(con_req: ConcurrencyRequest, request: Request):
 # Cookie path was moved to the top of the file
 
 @router.get("/settings/cookies")
-async def get_cookie_status():
-    return {"exists": os.path.exists(COOKIES_PATH)}
+async def get_cookie_status(request: Request):
+    cookies_path = get_cookies_path(request)
+    return {"exists": cookies_path and os.path.exists(cookies_path)}
 
 @router.get("/settings/cookies/upload")
 async def test_upload_route():
@@ -294,20 +272,127 @@ async def test_upload_route():
 
 @router.post("/settings/cookies/upload")
 @router.post("/settings/cookies/upload/")
-async def upload_cookies(file: UploadFile = File(...)):
+async def upload_cookies(request: Request, file: UploadFile = File(...)):
+    if not file.filename.endswith(".txt"):
+        raise HTTPException(status_code=400, detail="Cookie file must be a .txt file")
+    
     try:
-        with open(COOKIES_PATH, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+        content = await file.read()
+        text_content = content.decode("utf-8")
+        
+        # Validation & Auto-fix for common missing header issue
+        if "# Netscape HTTP Cookie File" not in text_content:
+            if "\t" in text_content:
+                # File looks like a cookie file (has tabs) but is missing the required header
+                text_content = "# Netscape HTTP Cookie File\n" + text_content
+                content = text_content.encode("utf-8")
+                print("DEBUG: Auto-added missing Netscape header to cookies.txt")
+            else:
+                raise HTTPException(status_code=400, detail="Invalid cookie format. Please upload a standard Netscape cookies.txt file.")
+        
+        cookies_path = get_cookies_path(request)
+        if not cookies_path:
+             raise HTTPException(status_code=500, detail="Cookie path not configured")
+
+        with open(cookies_path, "wb") as f:
+            f.write(content)
         return {"status": "success"}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.delete("/settings/cookies")
-async def delete_cookies():
-    if os.path.exists(COOKIES_PATH):
+async def delete_cookies(request: Request):
+    cookies_path = get_cookies_path(request)
+    if cookies_path and os.path.exists(cookies_path):
         try:
-            os.remove(COOKIES_PATH)
+            os.remove(cookies_path)
             return {"status": "success"}
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
     return {"status": "not_found"}
+
+# --- Proxy Management Endpoints ---
+
+@router.get("/settings/proxies")
+async def get_proxy_status(request: Request):
+    proxy_manager = request.app.state.proxy_manager
+    status = proxy_manager.get_status()
+    return {
+        "status": "verifying" if proxy_manager.is_verifying else "idle",
+        "total": status.get("total", 0),
+        "processed": status.get("processed", 0),
+        "valid": status.get("valid", 0),
+        "last_verified": status.get("last_verified")
+    }
+
+@router.post("/settings/proxies/upload")
+async def upload_proxies(request: Request, file: UploadFile = File(...)):
+    if not file.filename.endswith(".txt"):
+        raise HTTPException(status_code=400, detail="Proxy file must be a .txt file")
+    
+    proxy_manager = request.app.state.proxy_manager
+    try:
+        content = await file.read()
+        text_content = content.decode("utf-8")
+        
+        # 1. Negative Validation: Reject if it looks like a cookie file
+        if "# Netscape HTTP Cookie File" in text_content or "\t" in text_content:
+            raise HTTPException(status_code=400, detail="This looks like a cookie file, not a proxy list! Please check your file.")
+
+        lines = [l.strip() for l in text_content.splitlines() if l.strip()]
+        if not lines:
+            raise HTTPException(status_code=400, detail="Proxy file is empty")
+
+        import re
+        # Stricter pattern: must be [ptotocol://]host:port
+        # host: alphanumeric or - or .
+        # port: 1-5 digits
+        proxy_pattern = re.compile(r'^(([a-zA-Z0-9.-]+):(\d{1,5}))|([a-z0-9]+://[a-zA-Z0-9.-]+(:\d{1,5})?)')
+        
+        valid_proxies = [l for l in lines if proxy_pattern.search(l)]
+        
+        # If less than 50% of the non-empty lines are valid proxies, it's likely the wrong file type
+        if len(valid_proxies) < (len(lines) / 2):
+             raise HTTPException(status_code=400, detail="Invalid proxy format. Most lines do not match 'host:port' or 'protocol://host:port'.")
+
+        with open(proxy_manager.proxies_file, "wb") as f:
+            f.write(content)
+        
+        # Reset status on new upload
+        proxy_manager._status["total"] = len(lines)
+        proxy_manager._status["valid"] = 0
+        proxy_manager._status["processed"] = 0
+        proxy_manager._status["last_verified"] = None
+        proxy_manager._status["working_proxies"] = []
+        proxy_manager._save_status(force=True)
+        
+        return {"status": "success", "total": len(lines)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/settings/proxies/scrape")
+async def scrape_proxies(request: Request):
+    proxy_manager = request.app.state.proxy_manager
+    success = await proxy_manager.fetch_free_proxies()
+    if success:
+        return {"status": "success", "total": proxy_manager.get_status()["total"]}
+    raise HTTPException(status_code=500, detail="Failed to scrape proxies")
+
+@router.post("/settings/proxies/verify")
+async def verify_proxies_endpoint(request: Request):
+    proxy_manager = request.app.state.proxy_manager
+    if proxy_manager.is_verifying:
+        return {"status": "already_verifying"}
+    
+    await proxy_manager.verify_proxies()
+    return {"status": "started"}
+
+@router.delete("/settings/proxies")
+async def delete_proxies(request: Request):
+    proxy_manager = request.app.state.proxy_manager
+    proxy_manager.delete_proxies()
+    return {"status": "success"}

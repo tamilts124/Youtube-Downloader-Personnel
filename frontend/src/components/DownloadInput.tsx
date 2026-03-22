@@ -27,7 +27,7 @@ export const DownloadInput: React.FC<DownloadInputProps> = ({ url, setUrl, fetch
         disabled={fetching || !url}
         className="absolute right-2 top-1/2 -translate-y-1/2 btn-primary py-2 px-6 flex items-center gap-2"
       >
-        {fetching ? <Loader2 className="w-4 h-4 animate-spin" /> : <><span className="hidden sm:inline">Get Video</span> <ArrowRight className="w-4 h-4" /></>}
+        {fetching ? <Loader2 className="w-4 h-4 animate-spin" /> : <><span className="hidden sm:inline">Get Content</span> <ArrowRight className="w-4 h-4" /></>}
       </button>
     </form>
   )
