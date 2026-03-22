@@ -1,62 +1,55 @@
-# --- Stage 1: Build Frontend (Lightweight Nanoserver) ---
-FROM mcr.microsoft.com/powershell:nanoserver-ltsc2022 AS frontend-builder
-
-USER ContainerAdministrator
-WORKDIR /app/frontend
-
-# Install Node.js manually (Portable version)
-# Using Node 22.13.1 (LTS) to satisfy Vite 8 requirements
-RUN pwsh -Command "$ErrorActionPreference = 'Stop'; \
-    Write-Host 'Downloading Node.js...'; \
-    Invoke-WebRequest -Uri 'https://nodejs.org/dist/v22.13.1/node-v22.13.1-win-x64.zip' -OutFile 'node.zip'; \
-    Write-Host 'Extracting Node.js...'; \
-    Expand-Archive -Path 'node.zip' -DestinationPath 'C:\'; \
-    Rename-Item -Path 'C:\node-v22.13.1-win-x64' -NewName 'C:\nodejs'; \
-    Remove-Item -Path 'node.zip' -Force"
-
-# Add Node to path
-ENV PATH="C:\nodejs;${PATH}"
-
-# Build Frontend
-COPY frontend/package*.json ./
-RUN npm install
-COPY frontend/ ./
-RUN npm run build
-
-# --- Stage 2: Final Image (Lightweight Nanoserver) ---
-# NOTE: Final image remains Server Core for maximum compatibility with FFmpeg and Python libraries.
-# However, using Nanoserver for the builder stage already saves 3GB+ of build context.
-FROM mcr.microsoft.com/windows-cssc/python:3.11-servercore-ltsc2022
+# --- Ultra-Manual Minimal Windows Dockerfile (Nanoserver) ---
+FROM mcr.microsoft.com/powershell:nanoserver-ltsc2022
 
 USER ContainerAdministrator
 WORKDIR /app
 
-# Set PowerShell as default shell
-SHELL ["powershell", "-Command", "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue';"]
+# 1. Install Node.js (v22.13.1)
+RUN pwsh -Command "$ErrorActionPreference = 'Stop'; \
+    Write-Host 'Installing Node.js...'; \
+    Invoke-WebRequest -Uri 'https://nodejs.org/dist/v22.13.1/node-v22.13.1-win-x64.zip' -OutFile 'node.zip'; \
+    Expand-Archive -Path 'node.zip' -DestinationPath 'C:\'; \
+    Rename-Item -Path 'C:\node-v22.13.1-win-x64' -NewName 'C:\nodejs'; \
+    Remove-Item -Path 'node.zip' -Force"
+ENV PATH="C:\nodejs;${PATH}"
 
-# Install FFmpeg
-RUN Write-Host "Downloading FFmpeg..." ; \
-    Invoke-WebRequest -Uri "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" -OutFile "ffmpeg.zip" ; \
-    Write-Host "Extracting FFmpeg..." ; \
-    Expand-Archive -Path "ffmpeg.zip" -DestinationPath "C:\ffmpeg_temp" ; \
-    $ffmpegDir = Get-ChildItem -Path "C:\ffmpeg_temp" -Filter "ffmpeg-*" | Select-Object -First 1 ; \
-    Write-Host "Installing to System32..." ; \
-    Move-Item -Path "$($ffmpegDir.FullName)\bin\*" -Destination "C:\Windows\System32" ; \
-    Remove-Item -Path "C:\ffmpeg_temp" -Recurse -Force ; \
-    Remove-Item -Path "ffmpeg.zip" -Force ; \
-    Write-Host "FFmpeg installed successfully."
+# 2. Install Python (v3.11.9 embeddable)
+RUN pwsh -Command "$ErrorActionPreference = 'Stop'; \
+    Write-Host 'Installing Python...'; \
+    Invoke-WebRequest -Uri 'https://www.python.org/ftp/python/3.11.9/python-3.11.9-embed-amd64.zip' -OutFile 'python.zip'; \
+    Expand-Archive -Path 'python.zip' -DestinationPath 'C:\python'; \
+    Remove-Item -Path 'python.zip' -Force; \
+    Add-Content -Path 'C:\python\python311._pth' -Value 'import site'"
+ENV PATH="C:\python;${PATH}"
 
-# Copy requirements and install
-COPY backend/requirements.txt ./backend/requirements.txt
-RUN pip install --no-cache-dir --upgrade -r ./backend/requirements.txt
+# 3. Install Pip for embeddable Python
+RUN pwsh -Command "$ErrorActionPreference = 'Stop'; \
+    Write-Host 'Installing Pip...'; \
+    Invoke-WebRequest -Uri 'https://bootstrap.pypa.io/get-pip.py' -OutFile 'get-pip.py'; \
+    python get-pip.py; \
+    Remove-Item -Path 'get-pip.py' -Force"
 
-# Copy backend code
-COPY backend/ ./backend/
+# 4. Install FFmpeg (Static Build)
+RUN pwsh -Command "$ErrorActionPreference = 'Stop'; \
+    Write-Host 'Installing FFmpeg...'; \
+    Invoke-WebRequest -Uri 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip' -OutFile 'ffmpeg.zip'; \
+    Expand-Archive -Path 'ffmpeg.zip' -DestinationPath 'C:\ffmpeg_temp'; \
+    $ffmpegDir = Get-ChildItem -Path 'C:\ffmpeg_temp' -Filter 'ffmpeg-*' | Select-Object -First 1; \
+    Move-Item -Path \"$($ffmpegDir.FullName)\" -Destination 'C:\ffmpeg'; \
+    Remove-Item -Path 'C:\ffmpeg_temp' -Recurse -Force; \
+    Remove-Item -Path 'ffmpeg.zip' -Force"
+ENV PATH="C:\ffmpeg\bin;${PATH}"
 
-# Copy built frontend from Stage 1
-COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
+# Build Frontend
+COPY frontend/package*.json ./frontend/
+RUN cd frontend; npm install; npm run build
 
-# Set the working directory to backend
+# Install Backend Requirements
+COPY backend/requirements.txt ./backend/
+RUN pip install --no-cache-dir -r backend/requirements.txt
+
+# Final Copy and Run
+COPY . .
 WORKDIR /app/backend
 
 # Default port
