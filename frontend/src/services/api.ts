@@ -95,3 +95,18 @@ export const fetchFileBlob = async (task_id: string): Promise<Blob> => {
   if (!res.ok) throw new Error('Download failed');
   return res.blob();
 }
+
+export const rotateProxy = async (task_id: string) => {
+  return fetch(`${API_BASE}/api/proxy/rotate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ task_id })
+  })
+}
+
+export const skipCurrentProxy = async () => {
+  return fetch(`${API_BASE}/api/proxy/skip_current`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' }
+  });
+}

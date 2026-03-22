@@ -23,6 +23,7 @@ class DownloadTask:
         self.speed = "0 B/s"
         self.eta = "N/A"
         self.error_msg = ""
+        self.current_proxy = None # Track currently active proxy for rotation
         self._stop_event = threading.Event()
         self.speed_history = [] # To average jittery speeds
         self.last_broadcast_time = 0 # To throttle updates
@@ -209,6 +210,7 @@ class DownloadManager:
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     info = ydl.extract_info(url, download=False)
                     if info and 'entries' in info:
+                        # ... success logic ...
                         entries = list(info['entries'])
                         count = len(entries)
                         if self.loop:
@@ -240,13 +242,13 @@ class DownloadManager:
 
             except Exception as e:
                 error_msg = str(e).lower()
-                is_bot = "confirm you're not a bot" in error_msg or "sign in to confirm" in error_msg
                 
-                if used_proxy and is_bot:
-                    print(f"WARNING: Bot detected on proxy {used_proxy}. Pruning and retrying...")
+                if used_proxy:
+                    # Aggressive pruning: ANY failure means the proxy might be unreliable
+                    print(f"WARNING: Proxy {used_proxy} failed during playlist expansion. Pruning and retrying...")
                     self.proxy_manager.mark_failed(used_proxy)
                     attempted_proxies.add(used_proxy)
-                    continue # Try next proxy
+                    continue # Try next proxy or direct
                 
                 # Final failure
                 print(f"Playlist expansion error for {url}: {e}")
@@ -351,6 +353,22 @@ class DownloadManager:
                 self.max_concurrent = limit
             print(f"Concurrency limit set to: {self.max_concurrent}")
             self._trigger_process()
+
+    def rotate_task_proxy(self, task_id: str) -> bool:
+        """Manually prunes current proxy and restarts task."""
+        with self.lock:
+            task = self.tasks.get(task_id)
+            if task and task.status in ["downloading", "queued", "error"]:
+                if task.current_proxy and self.proxy_manager:
+                    print(f"DEBUG: Manually rotating proxy for task {task_id}. Pruning {task.current_proxy}")
+                    self.proxy_manager.mark_failed(task.current_proxy)
+                
+                # Restart the task - this will pick a new proxy
+                self.pause_task(task_id)
+                # Small delay to ensure worker sees stop event before resume puts it back in queue
+                threading.Timer(0.5, lambda: self.resume_task(task_id)).start()
+                return True
+            return False
 
     def _trigger_process(self):
         if self.loop:
@@ -473,7 +491,7 @@ class DownloadManager:
                     'continuedl': True,
                     'quiet': True,
                     'color': 'no_color',
-                    'socket_timeout': 15,
+                    'socket_timeout': 30, # Hardened timeout
                     'force_ipv4': True,
                     'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
                     'referer': 'https://www.youtube.com/',
@@ -485,6 +503,7 @@ class DownloadManager:
                 used_proxy = None
                 if self.proxy_manager:
                     used_proxy = self.proxy_manager.get_random_proxy(exclude=list(attempted_proxies))
+                    task.current_proxy = used_proxy # Record for manual rotation
                     if used_proxy:
                         ydl_opts['proxy'] = used_proxy
                         print(f"DEBUG: Download attempt {attempt+1} for {task.id} using proxy: {used_proxy}")
@@ -504,10 +523,10 @@ class DownloadManager:
                         return # Task explicitly stopped or paused
                     
                     error_msg = str(e).lower()
-                    is_bot = "confirm you're not a bot" in error_msg or "sign in to confirm" in error_msg
                     
-                    if used_proxy and is_bot:
-                        print(f"WARNING: Bot detected on proxy {used_proxy} for task {task.id}. Pruning and retrying...")
+                    if used_proxy:
+                        # Aggressive pruning: ANY failure means we drop the proxy for good
+                        print(f"WARNING: Proxy {used_proxy} failed for task {task.id}. Pruning and retrying...")
                         self.proxy_manager.mark_failed(used_proxy)
                         attempted_proxies.add(used_proxy)
                         continue # Try next proxy

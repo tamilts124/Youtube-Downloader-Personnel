@@ -190,6 +190,12 @@ function AppContent() {
         showNotification("Restarting...", "info")
         return
       }
+
+      if (action === 'rotate-proxy') {
+        await api.rotateProxy(task_id)
+        showNotification("Switching to a fresh proxy identity...", "info")
+        return
+      }
       
       // All these actions should remove the task from the active list
       if (action === 'delete' || action === 'cancel' || action === 'save') {

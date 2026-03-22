@@ -1,6 +1,6 @@
 import React from 'react'
-import { X, Settings2, Zap, Save, Cookie, ShieldCheck, AlertCircle, Trash2, Upload, Globe, RefreshCw, CheckCircle2 } from 'lucide-react'
-import { API_BASE } from '../services/api'
+import { X, Settings2, Zap, Save, Cookie, ShieldCheck, AlertCircle, Trash2, Upload, Globe, RefreshCw, CheckCircle2, Download } from 'lucide-react'
+import { API_BASE, skipCurrentProxy } from '../services/api'
 
 interface SettingsModalProps {
   show: boolean
@@ -177,6 +177,25 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     }
   }
 
+  const handleExportProxies = async () => {
+    try {
+      const exportUrl = `${API_BASE}/api/settings/proxies/export`
+      console.log('Exporting from:', exportUrl)
+      const res = await fetch(exportUrl)
+      const blob = await res.blob()
+      const blobUrl = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = blobUrl
+      a.download = 'valid_proxies.txt'
+      document.body.appendChild(a)
+      a.click()
+      window.URL.revokeObjectURL(blobUrl)
+      document.body.removeChild(a)
+    } catch (err) {
+      console.error('Export failed:', err)
+    }
+  }
+
   if (!show) return null
 
   return (
@@ -330,7 +349,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </div>
               </div>
             ) : proxyStatus.total > 0 ? (
-              <div className="space-y-3">
+              <div className="space-y-4">
                 <div className="grid grid-cols-2 gap-2">
                   <div className="p-3 bg-white/5 rounded-xl border border-white/5">
                     <p className="text-[10px] font-bold text-zinc-500 uppercase mb-1 tracking-wider">Total List</p>
@@ -351,17 +370,52 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       ? `Last Verified: ${new Date(proxyStatus.last_verified * 1000).toLocaleString([], {hour: '2-digit', minute:'2-digit'})}`
                       : 'Never verified'}
                   </p>
-                  <button 
-                    onClick={handleVerify}
-                    disabled={proxyStatus.status === 'verifying'}
-                    className="flex items-center gap-1.5 text-[10px] font-bold text-emerald-400 hover:text-emerald-300 transition-colors uppercase tracking-widest disabled:opacity-50"
-                  >
-                    <RefreshCw className={`w-3 h-3 ${proxyStatus.status === 'verifying' ? 'animate-spin' : ''}`} />
-                    {proxyStatus.status === 'verifying' 
-                      ? `Testing ${proxyStatus.processed}/${proxyStatus.total}` 
-                      : 'Verify Now'}
-                  </button>
+                  <div className="flex items-center gap-3">
+                    <button 
+                      onClick={handleExportProxies}
+                      className="flex items-center gap-1.5 text-[10px] font-bold text-sky-400 hover:text-sky-300 transition-colors uppercase tracking-widest"
+                    >
+                      <Download className="w-3 h-3" />
+                      Export Valid
+                    </button>
+                    <button 
+                      onClick={handleVerify}
+                      disabled={proxyStatus.status === 'verifying'}
+                      className="flex items-center gap-1.5 text-[10px] font-bold text-emerald-400 hover:text-emerald-300 transition-colors uppercase tracking-widest disabled:opacity-50"
+                    >
+                      <RefreshCw className={`w-3 h-3 ${proxyStatus.status === 'verifying' ? 'animate-spin' : ''}`} />
+                      {proxyStatus.status === 'verifying' 
+                        ? `Verify ${proxyStatus.processed}/${proxyStatus.total}` 
+                        : 'Verify Now'}
+                    </button>
+                  </div>
                 </div>
+
+                {proxyStatus.valid > 0 && (
+                  <div className="p-4 bg-amber-500/10 border border-amber-500/20 rounded-2xl flex flex-col gap-3">
+                    <div className="flex items-start gap-3">
+                      <div className="p-2 bg-amber-500/20 rounded-xl text-amber-400">
+                        <Zap className="w-5 h-5" />
+                      </div>
+                      <div className="flex-1">
+                        <h4 className="text-amber-200 font-bold text-sm">Switch Connection</h4>
+                        <p className="text-[11px] text-amber-200/60 mt-0.5 leading-tight">
+                          If downloads are stuck or slow, click here to try a fresh identity. Progress will be paused for safety.
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={async () => {
+                        await skipCurrentProxy();
+                        window.location.reload();
+                      }}
+                      className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 font-bold text-xs rounded-xl transition-all border border-amber-500/30 active:scale-[0.98]"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                      Discard Top Proxy & Rotate
+                    </button>
+                  </div>
+                )}
               </div>
             ) : (
               <div className="space-y-3">

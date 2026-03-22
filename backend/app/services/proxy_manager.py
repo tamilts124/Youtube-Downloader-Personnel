@@ -23,7 +23,7 @@ class ProxyManager:
                     return json.load(f)
             except:
                 pass
-        return {"total": 0, "processed": 0, "valid": 0, "last_verified": None, "working_proxies": []}
+        return {"total": 0, "processed": 0, "valid": 0, "last_verified": None, "working_proxies": [], "proxy_latencies": {}}
 
     def _save_status(self, force=False):
         # Throttle saves to disk to avoid excessive I/O
@@ -39,9 +39,10 @@ class ProxyManager:
         return self._status
 
     def get_random_proxy(self, exclude: list = None) -> str:
-        """Helper to get a random working proxy, optionally excluding some."""
+        """Helper to get the fastest working proxy, optionally excluding some."""
         with self._lock:
             working = self._status.get("working_proxies", [])
+            latencies = self._status.get("proxy_latencies", {})
             if not working:
                 return None
             
@@ -53,6 +54,16 @@ class ProxyManager:
             if not options:
                 return None
                 
+            # If we have latencies, sort by them (Fastest First)
+            if latencies:
+                # Filter latencies to only include our current options
+                valid_options = [p for p in options if p in latencies]
+                if valid_options:
+                    # Sort by recorded latency
+                    valid_options.sort(key=lambda p: latencies[p])
+                    return valid_options[0] # Return the fastest available
+            
+            # Fallback to random if no latency data or unexpected structure
             import random
             return random.choice(options)
 
@@ -81,16 +92,19 @@ class ProxyManager:
             print(f"Error fetching proxies: {e}")
             return False
 
-    def _test_proxy(self, proxy: str) -> bool:
+    def _test_proxy(self, proxy: str) -> tuple:
+        """Tests a proxy and returns (success: bool, latency: float)"""
         test_url = "https://www.youtube.com"
+        start_time = time.time()
         try:
             proxy_support = urllib.request.ProxyHandler({'http': proxy, 'https': proxy})
             opener = urllib.request.build_opener(proxy_support)
             # Short timeout for verification
             with opener.open(test_url, timeout=5) as response:
-                return response.status == 200
+                latency = time.time() - start_time
+                return response.status == 200, latency
         except:
-            return False
+            return False, 999.0
 
     async def verify_proxies(self):
         if self.is_verifying:
@@ -109,27 +123,31 @@ class ProxyManager:
             self._status["processed"] = 0
             self._status["valid"] = 0
             self._status["working_proxies"] = []
+            self._status["proxy_latencies"] = {}
             self._save_status(force=True)
 
             # Test the full list now that we have multi-threading
             to_test = proxies
-            valid_proxies = []
-
+            
             def test_and_update(p):
-                success = self._test_proxy(p)
+                success, latency = self._test_proxy(p)
                 with self._lock:
                     self._status["processed"] += 1
                     if success:
-                        valid_proxies.append(p)
-                        self._status["valid"] = len(valid_proxies)
+                        if p not in self._status["working_proxies"]:
+                            self._status["working_proxies"].append(p)
+                        self._status["proxy_latencies"][p] = latency
+                        self._status["valid"] = len(self._status["working_proxies"])
                     self._save_status() # Throttled inside
 
             # Using 50 threads for high speed
             with ThreadPoolExecutor(max_workers=50) as executor:
-                executor.map(test_and_update, to_test)
+                # We consume the map to ensure all tasks are submitted
+                list(executor.map(test_and_update, to_test))
 
             with self._lock:
-                self._status["working_proxies"] = valid_proxies
+                # Final sort by latency before marking finished
+                self._status["working_proxies"].sort(key=lambda p: self._status["proxy_latencies"].get(p, 999.0))
                 self._status["last_verified"] = int(time.time())
                 self._status["total"] = len(proxies)
                 self.is_verifying = False

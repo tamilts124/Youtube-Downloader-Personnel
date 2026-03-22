@@ -1,5 +1,6 @@
 from fastapi import APIRouter, WebSocket, Request, HTTPException, BackgroundTasks, UploadFile, File
 from fastapi.responses import FileResponse
+from starlette.background import BackgroundTask
 from pydantic import BaseModel
 import yt_dlp
 import asyncio
@@ -13,6 +14,10 @@ class TaskRequest(BaseModel):
     task_id: str
 
 router = APIRouter()
+
+@router.get("/health")
+async def health_check():
+    return {"status": "ok", "message": "API Router is active"}
 
 def get_cookies_path(request: Request):
     return getattr(request.app.state, 'cookies_path', None)
@@ -43,6 +48,7 @@ async def get_video_info(video_req: VideoRequest, request: Request):
         print(f"DEBUG: Using cookies from {cookies_path}")
 
     # Proxy selection and retry logic for info extraction
+    proxy_manager = getattr(request.app.state, "proxy_manager", None)
     attempted_proxies = set()
     max_attempts = 5
     if proxy_manager:
@@ -134,10 +140,10 @@ async def get_video_info(video_req: VideoRequest, request: Request):
             }
         except Exception as e:
             error_msg = str(e).lower()
-            is_bot = "confirm you're not a bot" in error_msg or "sign in to confirm" in error_msg
             
-            if used_proxy and is_bot:
-                print(f"WARNING: Bot detected on proxy {used_proxy}. Pruning and retrying...")
+            if used_proxy:
+                # Aggressive Pruning: remove on any metadata failure
+                print(f"WARNING: Proxy {used_proxy} failed during metadata extraction. Pruning and retrying...")
                 proxy_manager.mark_failed(used_proxy)
                 attempted_proxies.add(used_proxy)
                 continue # Try next proxy or direct
@@ -146,6 +152,7 @@ async def get_video_info(video_req: VideoRequest, request: Request):
             cookies_path = get_cookies_path(request)
             has_cookies = cookies_path and os.path.exists(cookies_path)
             
+            is_bot = "bot detection" in error_msg
             if is_bot:
                 msg = "YouTube is blocking the request (Bot Detection). Please refresh your proxies or upload a fresh cookies.txt using the Settings icon ⚙️."
                 if has_cookies:
@@ -226,6 +233,34 @@ async def cancel_download(req: ActionRequest, request: Request):
     if dl_manager:
         dl_manager.remove_task(req.task_id)
         return {"status": "cancelled"}
+
+@router.post("/proxy/rotate")
+async def rotate_proxy(req: ActionRequest, request: Request):
+    dl_manager = request.app.state.dl_manager
+    if dl_manager:
+        if dl_manager.rotate_task_proxy(req.task_id):
+            return {"status": "rotating"}
+    return {"status": "error"}
+
+@router.post("/proxy/skip_current")
+async def skip_current_proxy(request: Request):
+    """Global action to pause all, discard top proxy, and prepare for next."""
+    dl_manager = request.app.state.dl_manager
+    proxy_manager = request.app.state.proxy_manager
+    
+    if dl_manager:
+        dl_manager.pause_all()
+        
+    if proxy_manager:
+        status = proxy_manager.get_status()
+        working = status.get("working_proxies", [])
+        if working:
+            top_proxy = working[0]
+            print(f"DEBUG: Global skip requested. Pruning top proxy: {top_proxy}")
+            proxy_manager.mark_failed(top_proxy)
+            return {"status": "success", "removed": top_proxy}
+            
+    return {"status": "success", "message": "No active proxies to skip"}
 
 @router.post("/pause_all")
 async def pause_all(request: Request):
@@ -415,3 +450,33 @@ async def delete_proxies(request: Request):
     proxy_manager = request.app.state.proxy_manager
     proxy_manager.delete_proxies()
     return {"status": "success"}
+
+@router.get("/settings/proxies/export")
+async def export_proxies(request: Request):
+    print("DEBUG: Exporting proxies...")
+    proxy_manager = request.app.state.proxy_manager
+    status = proxy_manager.get_status()
+    working = status.get("working_proxies", [])
+    content = "\n".join(working)
+    
+    # Use a temporary file for the response
+    import tempfile
+    fd, temp_path = tempfile.mkstemp(suffix=".txt")
+    try:
+        with os.fdopen(fd, 'w') as tmp:
+            tmp.write(content)
+    except:
+        os.close(fd)
+        raise
+
+    def cleanup_temp():
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+            print(f"DEBUG: Cleaned up temp export file {temp_path}")
+
+    return FileResponse(
+        path=temp_path,
+        filename="valid_proxies.txt",
+        media_type="text/plain",
+        background=BackgroundTask(cleanup_temp)
+    )
