@@ -1,5 +1,5 @@
 import React from 'react'
-import { X, Settings2, Zap, Save } from 'lucide-react'
+import { X, Settings2, Zap, Save, Cookie, ShieldCheck, AlertCircle, Trash2, Upload } from 'lucide-react'
 
 interface SettingsModalProps {
   show: boolean
@@ -18,6 +18,51 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   concurrencyLimit, 
   setConcurrencyLimit 
 }) => {
+  const [cookiesExists, setCookiesExists] = React.useState<boolean>(false)
+  const [uploading, setUploading] = React.useState<boolean>(false)
+  const fileInputRef = React.useRef<HTMLInputElement>(null)
+
+  React.useEffect(() => {
+    if (show) {
+      fetch('/api/settings/cookies')
+        .then(res => res.json())
+        .then(data => setCookiesExists(data.exists))
+        .catch(err => console.error('Failed to fetch cookie status:', err))
+    }
+  }, [show])
+
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    
+    setUploading(true)
+    const formData = new FormData()
+    formData.append('file', file)
+    
+    try {
+      const res = await fetch('/api/settings/cookies/upload', {
+        method: 'POST',
+        body: formData
+      })
+      if (res.ok) setCookiesExists(true)
+    } catch (err) {
+      console.error('Upload failed:', err)
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  const handleDelete = async () => {
+    if (!confirm("Are you sure you want to remove your YouTube cookies? This might cause bot-detection issues.")) return
+    
+    try {
+      const res = await fetch('/api/settings/cookies', { method: 'DELETE' })
+      if (res.ok) setCookiesExists(false)
+    } catch (err) {
+      console.error('Delete failed:', err)
+    }
+  }
+
   if (!show) return null
 
   return (
@@ -43,7 +88,52 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </button>
         </div>
 
-        <div className="space-y-8">
+        <div className="space-y-6">
+          {/* YouTube Authentication Section */}
+          <div className="p-4 bg-white/5 rounded-2xl border border-white/5">
+            <div className="flex items-center gap-2 mb-4">
+              <Cookie className="w-4 h-4 text-amber-400" />
+              <p className="text-sm font-semibold text-white">YouTube Authentication</p>
+            </div>
+            
+            {cookiesExists ? (
+              <div className="flex items-center justify-between p-3 bg-emerald-500/10 rounded-xl border border-emerald-500/20">
+                <div className="flex items-center gap-2">
+                  <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                  <span className="text-xs font-bold text-emerald-400">Authenticated ✅</span>
+                </div>
+                <button 
+                  onClick={handleDelete}
+                  className="p-2 text-zinc-500 hover:text-red-400 transition-colors"
+                  title="Remove Cookies"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="flex items-center gap-2 p-3 bg-amber-500/10 rounded-xl border border-amber-500/20 text-amber-400">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span className="text-[11px] leading-tight font-medium">Bypass "Sign in to confirm you're not a bot" by providing your cookies.</span>
+                </div>
+                <input 
+                  type="file" 
+                  ref={fileInputRef} 
+                  onChange={handleUpload} 
+                  accept=".txt" 
+                  className="hidden" 
+                />
+                <button 
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploading}
+                  className="w-full py-2.5 bg-white/5 hover:bg-white/10 text-white text-xs font-bold rounded-xl border border-dashed border-white/10 transition-all flex items-center justify-center gap-2"
+                >
+                  {uploading ? "Uploading..." : <><Upload className="w-3.5 h-3.5" /> Upload cookies.txt</>}
+                </button>
+              </div>
+            )}
+          </div>
+
           <div className="flex items-center justify-between p-4 bg-white/5 rounded-2xl border border-white/5">
             <div>
               <p className="text-sm font-semibold text-white">Auto-Save Finished Work</p>

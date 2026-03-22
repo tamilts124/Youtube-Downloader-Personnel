@@ -1,9 +1,10 @@
-from fastapi import APIRouter, WebSocket, Request, HTTPException, BackgroundTasks
+from fastapi import APIRouter, WebSocket, Request, HTTPException, BackgroundTasks, UploadFile, File
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import yt_dlp
 import asyncio
 import os
+import shutil
 from anyio.to_thread import run_sync
 from typing import Dict, List
 from app.schemas.requests import VideoRequest, DownloadRequest, ActionRequest, PriorityRequest, ConcurrencyRequest, TaskActionRequest
@@ -240,3 +241,29 @@ async def set_concurrency(con_req: ConcurrencyRequest, request: Request):
         dl_manager.set_max_concurrent(con_req.limit)
         return {"status": "updated", "limit": dl_manager.max_concurrent}
     return {"status": "error"}
+
+# --- YouTube Cookie Management ---
+COOKIES_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "cookies.txt"))
+
+@router.get("/api/settings/cookies")
+async def get_cookie_status():
+    return {"exists": os.path.exists(COOKIES_PATH)}
+
+@router.post("/api/settings/cookies/upload")
+async def upload_cookies(file: UploadFile = File(...)):
+    try:
+        with open(COOKIES_PATH, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        return {"status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.delete("/api/settings/cookies")
+async def delete_cookies():
+    if os.path.exists(COOKIES_PATH):
+        try:
+            os.remove(COOKIES_PATH)
+            return {"status": "success"}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+    return {"status": "not_found"}
