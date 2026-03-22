@@ -1,6 +1,7 @@
 # --- Stage 1: Build Frontend (Lightweight Nanoserver) ---
 FROM mcr.microsoft.com/powershell:nanoserver-ltsc2022 AS frontend-builder
 
+USER ContainerAdministrator
 WORKDIR /app/frontend
 
 # Install Node.js manually (Portable version)
@@ -27,6 +28,7 @@ RUN npm run build
 # However, using Nanoserver for the builder stage already saves 3GB+ of build context.
 FROM mcr.microsoft.com/windows-cssc/python:3.11-servercore-ltsc2022
 
+USER ContainerAdministrator
 WORKDIR /app
 
 # Set PowerShell as default shell
